@@ -8,6 +8,7 @@ import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { MonitorExplorer } from './monitor/MonitorExplorer'
+import { MaintainExplorer } from './maintain/MaintainExplorer'
 
 type TabId = 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain'
 
@@ -88,6 +89,8 @@ export function App() {
             />
           ) : active === 'monitor' ? (
             <MonitorExplorer />
+          ) : active === 'maintain' ? (
+            <MaintainExplorer />
           ) : (
             <PlaceholderBody tab={activeTab} />
           )}
