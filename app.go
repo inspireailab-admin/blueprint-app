@@ -38,23 +38,30 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // VersionInfo is what the frontend renders at the bottom of the window
-// to confirm the app + kernel are wired correctly. Bumped to a richer
-// surface (build SHA, GPU detected, etc.) once those data sources land.
+// to confirm the app + kernel are wired correctly.
 type VersionInfo struct {
-	App        string `json:"app"`
-	ModelCount int    `json:"modelCount"`
+	App         string `json:"app"`
+	CatalogAsOf string `json:"catalogAsOf"`
+	ModelCount  int    `json:"modelCount"`
 }
 
-// Version returns the app version and the number of models the kernel
-// can see. First IPC call wired in Phase 1 — proves the frontend can
-// reach Go and Go can reach the Blueprint kernel.
+// Version returns the app version, the catalog "as of" date, and the
+// model count. Cheap call, used by the status bar.
 func (a *App) Version() (VersionInfo, error) {
-	models, err := catalog.Load()
+	cat, err := catalog.LoadFull()
 	if err != nil {
 		return VersionInfo{}, err
 	}
 	return VersionInfo{
-		App:        AppVersion,
-		ModelCount: len(models),
+		App:         AppVersion,
+		CatalogAsOf: cat.AsOf,
+		ModelCount:  len(cat.Models),
 	}, nil
+}
+
+// Catalog returns the full embedded model catalog. The Plan tab calls
+// this once on mount and caches in React state; subsequent filter /
+// rank work happens entirely in the frontend.
+func (a *App) Catalog() (catalog.Catalog, error) {
+	return catalog.LoadFull()
 }
