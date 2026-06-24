@@ -1,10 +1,14 @@
 name: Release
 
 # Tag-driven release. Push a `v*` tag (e.g. v0.1.0) and this builds
-# the per-OS binaries, attaches them to a GitHub Release, and publishes
-# release notes. Code-signing + notarization land in Phase 7 — for now
-# these are unsigned developer builds, which the marketing /download
-# page calls out honestly.
+# per-OS installers (NSIS on Windows, .app+.dmg on macOS, AppImage on
+# Linux), attaches them to a GitHub Release, and publishes release notes.
+#
+# Code signing + notarization are guarded behind secrets that may not
+# be set yet — when WINDOWS_CERT / APPLE_DEVELOPER_ID are present the
+# pipeline produces signed artifacts; otherwise it produces unsigned
+# developer builds that the marketing /download page can call out
+# honestly.
 
 on:
   push:
@@ -28,16 +32,19 @@ jobs:
         include:
           - os: windows-latest
             target: windows/amd64
-            artifact: blueprint-windows-amd64.exe
-            built: blueprint.exe
+            wails_flags: '-nsis'
+            artifact_glob: 'build/bin/blueprint-amd64-installer.exe'
+            artifact_name: blueprint-windows-amd64-installer.exe
           - os: macos-latest
             target: darwin/universal
-            artifact: blueprint-macos-universal.tar.gz
-            built: blueprint.app
+            wails_flags: ''
+            artifact_glob: 'build/bin/blueprint.app'
+            artifact_name: blueprint-macos-universal.app.zip
           - os: ubuntu-latest
             target: linux/amd64
-            artifact: blueprint-linux-amd64
-            built: blueprint
+            wails_flags: ''
+            artifact_glob: 'build/bin/blueprint'
+            artifact_name: blueprint-linux-amd64
 
     steps:
       - uses: actions/checkout@v4
@@ -63,23 +70,66 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
       - name: Wails build
-        run: wails build -platform ${{ matrix.target }} -ldflags "-X main.AppVersion=${GITHUB_REF_NAME#v}"
+        run: |
+          wails build \
+            -platform ${{ matrix.target }} \
+            ${{ matrix.wails_flags }} \
+            -ldflags "-X main.AppVersion=${GITHUB_REF_NAME#v}"
 
-      - name: Pack artifact (macOS .app → tar.gz)
+      # ─── Windows: optionally code-sign the installer ─────────────
+      # Set WINDOWS_CERT (base64-encoded .pfx) + WINDOWS_CERT_PASSWORD
+      # as GitHub Actions secrets to enable. Without them the installer
+      # is unsigned and the user gets a Defender SmartScreen warning on
+      # first launch.
+      - name: Sign Windows installer (when cert available)
+        if: matrix.os == 'windows-latest' && env.WINDOWS_CERT != ''
+        env:
+          WINDOWS_CERT: ${{ secrets.WINDOWS_CERT }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          echo "$WINDOWS_CERT" | base64 -d > cert.pfx
+          signtool sign /f cert.pfx /p "$WINDOWS_CERT_PASSWORD" /tr http://timestamp.digicert.com /td sha256 /fd sha256 ${{ matrix.artifact_glob }}
+          rm -f cert.pfx
+
+      # ─── macOS: zip the .app for upload, optionally notarize ─────
+      - name: Package macOS .app
         if: matrix.os == 'macos-latest'
         run: |
           cd build/bin
-          tar -czf ${{ matrix.artifact }} ${{ matrix.built }}
+          ditto -c -k --sequesterRsrc --keepParent blueprint.app ../../${{ matrix.artifact_name }}
+          mv ../../${{ matrix.artifact_name }} ${{ matrix.artifact_name }}
 
-      - name: Rename artifact (Windows + Linux)
+      - name: Notarize macOS (when Apple ID available)
+        if: matrix.os == 'macos-latest' && env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit build/bin/${{ matrix.artifact_name }} \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+
+      # ─── Final artifact rename (Windows + Linux) ─────────────────
+      - name: Rename artifact
         if: matrix.os != 'macos-latest'
-        run: mv build/bin/${{ matrix.built }} build/bin/${{ matrix.artifact }}
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Wails produces blueprint-amd64-installer.exe with -nsis;
+            # the regular .exe is also there. Move the installer to a
+            # predictable name for the upload step.
+            cp ${{ matrix.artifact_glob }} build/bin/${{ matrix.artifact_name }}
+          else
+            cp build/bin/blueprint build/bin/${{ matrix.artifact_name }}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: build/bin/${{ matrix.artifact }}
+          name: ${{ matrix.artifact_name }}
+          path: build/bin/${{ matrix.artifact_name }}
           retention-days: 7
 
   release:
@@ -100,5 +150,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "Blueprint app $GITHUB_REF_NAME — see CHANGELOG and the marketing site at https://blueprint.inspireailab.com/download for download instructions." \
+            --notes "Blueprint $GITHUB_REF_NAME — install from one of the artifacts below. See https://blueprint.inspireailab.com/download for the rendered download page." \
             artifacts/*/blueprint-*
