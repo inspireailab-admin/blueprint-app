@@ -9,6 +9,8 @@ import { HardwareExplorer } from './hardware/HardwareExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { MonitorExplorer } from './monitor/MonitorExplorer'
 import { MaintainExplorer } from './maintain/MaintainExplorer'
+import { WelcomeOverlay } from './WelcomeOverlay'
+import { AboutDialog } from './AboutDialog'
 
 type TabId = 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain'
 
@@ -54,7 +56,8 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
-      <TitleBar />
+      <WelcomeOverlay />
+      <TitleBar version={version} />
       <TabBar tabs={TABS} active={active} onSelect={setActive} />
 
       <main className="flex-1 overflow-y-auto">
@@ -115,16 +118,27 @@ function CatalogError({ message }: { message: string }) {
   )
 }
 
-function TitleBar() {
+function TitleBar({ version }: { version: main.VersionInfo | null }) {
+  const [aboutOpen, setAboutOpen] = useState(false)
   return (
-    <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-      <div className="flex items-baseline gap-2">
-        <h2 className="text-base font-semibold tracking-tight">Blueprint</h2>
-        <p className="text-xs text-muted-foreground">
-          Run open LLMs on your own hardware.
-        </p>
+    <>
+      <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-base font-semibold tracking-tight">Blueprint</h2>
+          <p className="text-xs text-muted-foreground">
+            Run open LLMs on your own hardware.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAboutOpen(true)}
+          className="rounded-md px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          About
+        </button>
       </div>
-    </div>
+      {aboutOpen && <AboutDialog version={version} onClose={() => setAboutOpen(false)} />}
+    </>
   )
 }
 
