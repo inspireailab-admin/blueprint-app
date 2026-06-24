@@ -6,6 +6,7 @@ import { usePlannerState } from './planner/state'
 import type { Model } from './planner/types'
 import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
+import { DeployExplorer } from './deploy/DeployExplorer'
 
 type TabId = 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain'
 
@@ -77,6 +78,12 @@ export function App() {
               onUpdate={planner.update}
               onBackToPlan={() => setActive('plan')}
               onContinueToDeploy={() => setActive('deploy')}
+            />
+          ) : active === 'deploy' ? (
+            <DeployExplorer
+              selectedModel={selectedModel}
+              requirements={planner.requirements}
+              onBackToHardware={() => setActive('hardware')}
             />
           ) : (
             <PlaceholderBody tab={activeTab} />
