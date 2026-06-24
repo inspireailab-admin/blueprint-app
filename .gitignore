@@ -31,3 +31,6 @@ frontend/package.json.md5
 
 # npm lockfile — we use pnpm
 frontend/package-lock.json
+
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo
