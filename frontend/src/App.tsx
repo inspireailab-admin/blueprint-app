@@ -7,6 +7,7 @@ import type { Model } from './planner/types'
 import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
+import { MonitorExplorer } from './monitor/MonitorExplorer'
 
 type TabId = 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain'
 
@@ -85,6 +86,8 @@ export function App() {
               requirements={planner.requirements}
               onBackToHardware={() => setActive('hardware')}
             />
+          ) : active === 'monitor' ? (
+            <MonitorExplorer />
           ) : (
             <PlaceholderBody tab={activeTab} />
           )}
