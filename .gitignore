@@ -1,0 +1,33 @@
+# Build output
+build/bin/
+frontend/dist/
+
+# Wails generated bindings (regenerated on every build — keeping them in
+# git would create churn on every method change)
+frontend/wailsjs/
+
+# Node
+node_modules/
+.pnpm-store/
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Wails build cache (per-machine, regenerated)
+frontend/package.json.md5
+
+# npm lockfile — we use pnpm
+frontend/package-lock.json

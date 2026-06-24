@@ -1,0 +1,104 @@
+name: Release
+
+# Tag-driven release. Push a `v*` tag (e.g. v0.1.0) and this builds
+# the per-OS binaries, attaches them to a GitHub Release, and publishes
+# release notes. Code-signing + notarization land in Phase 7 — for now
+# these are unsigned developer builds, which the marketing /download
+# page calls out honestly.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows/amd64
+            artifact: blueprint-windows-amd64.exe
+            built: blueprint.exe
+          - os: macos-latest
+            target: darwin/universal
+            artifact: blueprint-macos-universal.tar.gz
+            built: blueprint.app
+          - os: ubuntu-latest
+            target: linux/amd64
+            artifact: blueprint-linux-amd64
+            built: blueprint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux Wails deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm install -g pnpm@10
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Wails build
+        run: wails build -platform ${{ matrix.target }} -ldflags "-X main.AppVersion=${GITHUB_REF_NAME#v}"
+
+      - name: Pack artifact (macOS .app → tar.gz)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd build/bin
+          tar -czf ${{ matrix.artifact }} ${{ matrix.built }}
+
+      - name: Rename artifact (Windows + Linux)
+        if: matrix.os != 'macos-latest'
+        run: mv build/bin/${{ matrix.built }} build/bin/${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/bin/${{ matrix.artifact }}
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Blueprint app $GITHUB_REF_NAME — see CHANGELOG and the marketing site at https://blueprint.inspireailab.com/download for download instructions." \
+            artifacts/*/blueprint-*
