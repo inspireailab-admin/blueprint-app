@@ -1,60 +1,35 @@
-// Top-level Plan tab. Loads the catalog from the Wails kernel once on
-// mount and feeds it into the three-column explorer (filter panel,
-// ranked results, detail pane).
-//
-// Mirrors the marketing site's PlanExplorer but with two differences:
-//   - state is in-memory (no URL sync)
-//   - the "continue to Hardware" button calls a tab-switch callback
-//     instead of routing
+// Plan tab — same three-column shape as the marketing site's /plan page,
+// minus the URL state. Catalog + planner state are owned by App so that
+// switching tabs doesn't lose the user's filter / selection.
 
-import { useEffect, useMemo, useState } from 'react'
-import { familiesIn, findModel, loadCatalog } from './catalog'
-import { usePlannerState } from './state'
+import { useMemo, useState } from 'react'
+import { familiesIn, findModel } from './catalog'
 import { rankAll } from './rank'
 import type { Model } from './types'
+import type { PlannerStore } from './state'
 import { FilterPanel } from './FilterPanel'
 import { ResultsList } from './ResultsList'
 import { DetailPane } from './DetailPane'
 import { HelpMeChoose } from './HelpMeChoose'
 
 type Props = {
-  /** Called when the user clicks Continue → Hardware. Lifted to the
-   *  App shell so it can switch the active tab. */
+  models: Model[] | null
+  planner: PlannerStore
   onContinueToHardware: () => void
 }
 
-export function PlanExplorer({ onContinueToHardware }: Props) {
-  const { requirements, selectedModelId, update, selectModel, reset } = usePlannerState()
+export function PlanExplorer({ models, planner, onContinueToHardware }: Props) {
   const [helpOpen, setHelpOpen] = useState(false)
-  const [models, setModels] = useState<Model[] | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-
-  useEffect(() => {
-    loadCatalog()
-      .then(({ models }) => setModels(models))
-      .catch((err: unknown) =>
-        setLoadError(err instanceof Error ? err.message : String(err)),
-      )
-  }, [])
 
   const ranked = useMemo(
-    () => (models ? rankAll(requirements, models) : []),
-    [requirements, models],
+    () => (models ? rankAll(planner.requirements, models) : []),
+    [planner.requirements, models],
   )
   const families = useMemo(() => (models ? familiesIn(models) : []), [models])
   const selectedModel = useMemo(
-    () => findModel(models ?? [], selectedModelId),
-    [models, selectedModelId],
+    () => findModel(models ?? [], planner.selectedModelId),
+    [models, planner.selectedModelId],
   )
-
-  if (loadError) {
-    return (
-      <div className="mt-8 rounded-xl border border-red-300 bg-red-50 p-6 text-sm text-red-900">
-        <p className="font-semibold">Couldn&apos;t load the catalog</p>
-        <p className="mt-1 text-red-800">{loadError}</p>
-      </div>
-    )
-  }
 
   if (!models) {
     return <LoadingSkeleton />
@@ -64,23 +39,23 @@ export function PlanExplorer({ onContinueToHardware }: Props) {
     <>
       <div className="mt-8 grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
         <FilterPanel
-          requirements={requirements}
+          requirements={planner.requirements}
           families={families}
-          onUpdate={update}
+          onUpdate={planner.update}
           onOpenHelp={() => setHelpOpen(true)}
-          onReset={reset}
+          onReset={planner.reset}
         />
 
         <ResultsList
           ranked={ranked}
-          selectedId={selectedModelId}
-          requirements={requirements}
-          onSelect={selectModel}
+          selectedId={planner.selectedModelId}
+          requirements={planner.requirements}
+          onSelect={planner.selectModel}
         />
 
         <DetailPane
           selectedModel={selectedModel}
-          requirements={requirements}
+          requirements={planner.requirements}
           onContinue={onContinueToHardware}
         />
       </div>
@@ -88,7 +63,7 @@ export function PlanExplorer({ onContinueToHardware }: Props) {
       <HelpMeChoose
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
-        onApply={update}
+        onApply={planner.update}
       />
     </>
   )
@@ -97,9 +72,9 @@ export function PlanExplorer({ onContinueToHardware }: Props) {
 function LoadingSkeleton() {
   return (
     <div className="mt-8 grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
-      <div className="h-[420px] rounded-2xl border border-border bg-neutral-100" />
-      <div className="h-[420px] rounded-2xl border border-border bg-neutral-100" />
-      <div className="h-[260px] rounded-2xl border border-border bg-neutral-100" />
+      <div className="h-[420px] rounded-2xl border border-border bg-muted/30" />
+      <div className="h-[420px] rounded-2xl border border-border bg-muted/30" />
+      <div className="h-[260px] rounded-2xl border border-border bg-muted/30" />
     </div>
   )
 }
