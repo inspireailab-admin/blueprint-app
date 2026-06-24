@@ -1,0 +1,221 @@
+{
+  "asOf": "2026-06",
+  "note": "Approximate USD/hr, US regions, intended for sizing comparisons. Real per-region prices vary 30%+; the live tool should pull current pricing APIs before any commit.",
+  "providers": [
+    {
+      "id": "aws",
+      "name": "AWS",
+      "regions": ["us-east-1", "us-west-2"],
+      "instances": [
+        {
+          "instanceType": "g6e.xlarge",
+          "gpuId": "l40s-48",
+          "gpuCount": 1,
+          "vcpu": 4,
+          "ramGB": 32,
+          "onDemandPerHr": 1.86,
+          "reservedPerHr": 0.82,
+          "spotPerHr": 0.65
+        },
+        {
+          "instanceType": "g6e.12xlarge",
+          "gpuId": "l40s-48",
+          "gpuCount": 4,
+          "vcpu": 48,
+          "ramGB": 384,
+          "onDemandPerHr": 10.49,
+          "reservedPerHr": 4.65,
+          "spotPerHr": 3.65
+        },
+        {
+          "instanceType": "p4de.24xlarge",
+          "gpuId": "a100-80",
+          "gpuCount": 8,
+          "vcpu": 96,
+          "ramGB": 1152,
+          "onDemandPerHr": 40.96,
+          "reservedPerHr": 22.0,
+          "spotPerHr": 14.5
+        },
+        {
+          "instanceType": "p5.48xlarge",
+          "gpuId": "h100-80",
+          "gpuCount": 8,
+          "vcpu": 192,
+          "ramGB": 2048,
+          "onDemandPerHr": 98.32,
+          "reservedPerHr": 52.0,
+          "spotPerHr": 34.0
+        }
+      ]
+    },
+    {
+      "id": "gcp",
+      "name": "GCP",
+      "regions": ["us-central1", "europe-west4"],
+      "instances": [
+        {
+          "instanceType": "a2-ultragpu-1g",
+          "gpuId": "a100-80",
+          "gpuCount": 1,
+          "vcpu": 12,
+          "ramGB": 170,
+          "onDemandPerHr": 3.93,
+          "reservedPerHr": 2.1,
+          "spotPerHr": 1.35
+        },
+        {
+          "instanceType": "a2-ultragpu-8g",
+          "gpuId": "a100-80",
+          "gpuCount": 8,
+          "vcpu": 96,
+          "ramGB": 1360,
+          "onDemandPerHr": 31.48,
+          "reservedPerHr": 16.9,
+          "spotPerHr": 10.8
+        },
+        {
+          "instanceType": "a3-highgpu-8g",
+          "gpuId": "h100-80",
+          "gpuCount": 8,
+          "vcpu": 208,
+          "ramGB": 1872,
+          "onDemandPerHr": 84.74,
+          "reservedPerHr": 45.0,
+          "spotPerHr": 29.0
+        }
+      ]
+    },
+    {
+      "id": "azure",
+      "name": "Azure",
+      "regions": ["eastus", "westus3"],
+      "instances": [
+        {
+          "instanceType": "Standard_NC24ads_A100_v4",
+          "gpuId": "a100-80",
+          "gpuCount": 1,
+          "vcpu": 24,
+          "ramGB": 220,
+          "onDemandPerHr": 3.67,
+          "reservedPerHr": 1.95,
+          "spotPerHr": 1.25
+        },
+        {
+          "instanceType": "Standard_ND96isr_v4",
+          "gpuId": "a100-80",
+          "gpuCount": 8,
+          "vcpu": 96,
+          "ramGB": 1900,
+          "onDemandPerHr": 32.77,
+          "reservedPerHr": 17.6,
+          "spotPerHr": 11.3
+        },
+        {
+          "instanceType": "Standard_ND96isr_H100_v5",
+          "gpuId": "h100-80",
+          "gpuCount": 8,
+          "vcpu": 96,
+          "ramGB": 1900,
+          "onDemandPerHr": 98.32,
+          "reservedPerHr": 52.0,
+          "spotPerHr": 34.0
+        }
+      ]
+    },
+    {
+      "id": "lambda",
+      "name": "Lambda",
+      "regions": ["us-east-1", "us-west-2"],
+      "instances": [
+        {
+          "instanceType": "gpu_1x_a100_80gb",
+          "gpuId": "a100-80",
+          "gpuCount": 1,
+          "vcpu": 30,
+          "ramGB": 200,
+          "onDemandPerHr": 1.79,
+          "reservedPerHr": 1.4,
+          "spotPerHr": 1.79
+        },
+        {
+          "instanceType": "gpu_8x_a100_80gb",
+          "gpuId": "a100-80",
+          "gpuCount": 8,
+          "vcpu": 124,
+          "ramGB": 1800,
+          "onDemandPerHr": 14.32,
+          "reservedPerHr": 11.5,
+          "spotPerHr": 14.32
+        },
+        {
+          "instanceType": "gpu_1x_h100_80gb",
+          "gpuId": "h100-80",
+          "gpuCount": 1,
+          "vcpu": 26,
+          "ramGB": 200,
+          "onDemandPerHr": 2.49,
+          "reservedPerHr": 2.0,
+          "spotPerHr": 2.49
+        },
+        {
+          "instanceType": "gpu_8x_h100_80gb",
+          "gpuId": "h100-80",
+          "gpuCount": 8,
+          "vcpu": 192,
+          "ramGB": 1800,
+          "onDemandPerHr": 19.92,
+          "reservedPerHr": 16.0,
+          "spotPerHr": 19.92
+        }
+      ]
+    },
+    {
+      "id": "runpod",
+      "name": "RunPod",
+      "regions": ["us-east", "us-west", "europe-romania"],
+      "instances": [
+        {
+          "instanceType": "rtx-4090",
+          "gpuId": "rtx-4090-24",
+          "gpuCount": 1,
+          "vcpu": 16,
+          "ramGB": 32,
+          "onDemandPerHr": 0.69,
+          "reservedPerHr": 0.69,
+          "spotPerHr": 0.34
+        },
+        {
+          "instanceType": "l40s",
+          "gpuId": "l40s-48",
+          "gpuCount": 1,
+          "vcpu": 16,
+          "ramGB": 64,
+          "onDemandPerHr": 0.99,
+          "reservedPerHr": 0.85,
+          "spotPerHr": 0.52
+        },
+        {
+          "instanceType": "a100-80gb",
+          "gpuId": "a100-80",
+          "gpuCount": 1,
+          "vcpu": 30,
+          "ramGB": 200,
+          "onDemandPerHr": 1.89,
+          "reservedPerHr": 1.5,
+          "spotPerHr": 1.19
+        },
+        {
+          "instanceType": "h100-80gb",
+          "gpuId": "h100-80",
+          "gpuCount": 1,
+          "vcpu": 30,
+          "ramGB": 200,
+          "onDemandPerHr": 2.99,
+          "reservedPerHr": 2.45,
+          "spotPerHr": 1.89
+        }
+      ]
+    }
+  ]
+}
