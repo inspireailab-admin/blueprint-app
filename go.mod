@@ -3,7 +3,7 @@ module github.com/inspireailab-admin/blueprint-app
 go 1.23.0
 
 require (
-	github.com/inspireailab-admin/blueprint v0.1.1-0.20260624202840-8066440050de
+	github.com/inspireailab-admin/blueprint v0.1.1-0.20260624233402-7c364235ff2d
 	github.com/wailsapp/wails/v2 v2.12.0
 )
 
