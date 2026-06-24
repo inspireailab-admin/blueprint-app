@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Version } from '../wailsjs/go/main/App'
 import type { main } from '../wailsjs/go/models'
+import { PlanExplorer } from './planner/PlanExplorer'
 
 type TabId = 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain'
 
@@ -28,17 +29,22 @@ export function App() {
   const activeTab = TABS.find((t) => t.id === active)!
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-50 text-neutral-900">
+    <div className="flex h-screen flex-col bg-background text-foreground">
       <TitleBar />
       <TabBar tabs={TABS} active={active} onSelect={setActive} />
 
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-8 py-10 selectable">
+        <div className="mx-auto max-w-6xl px-6 py-8 selectable">
           <p className="eyebrow">{activeTab.label}</p>
-          <h1 className="mt-2 text-balance text-3xl font-semibold tracking-tight">
+          <h1 className="mt-2 text-balance text-2xl font-semibold tracking-tight">
             {activeTab.description}
           </h1>
-          <PlaceholderBody tab={activeTab} />
+
+          {active === 'plan' ? (
+            <PlanExplorer onContinueToHardware={() => setActive('hardware')} />
+          ) : (
+            <PlaceholderBody tab={activeTab} />
+          )}
         </div>
       </main>
 
@@ -49,10 +55,10 @@ export function App() {
 
 function TitleBar() {
   return (
-    <div className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3">
+    <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
       <div className="flex items-baseline gap-2">
         <h2 className="text-base font-semibold tracking-tight">Blueprint</h2>
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-muted-foreground">
           Run open LLMs on your own hardware.
         </p>
       </div>
@@ -73,7 +79,7 @@ function TabBar({
     <nav
       role="tablist"
       aria-label="Main"
-      className="flex gap-1 border-b border-neutral-200 bg-white px-4"
+      className="flex gap-1 border-b border-border bg-card px-4"
     >
       {tabs.map((tab) => {
         const isActive = tab.id === active
@@ -87,8 +93,8 @@ function TabBar({
             className={[
               '-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition',
               isActive
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-neutral-500 hover:text-neutral-900',
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
             ].join(' ')}
           >
             {tab.label}
@@ -101,18 +107,16 @@ function TabBar({
 
 function PlaceholderBody({ tab }: { tab: (typeof TABS)[number] }) {
   return (
-    <div className="mt-8 rounded-2xl border border-dashed border-neutral-300 bg-white p-10">
-      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500">
+    <div className="mt-8 rounded-2xl border border-dashed border-border bg-card p-10">
+      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
         Coming in Phase {phaseFor(tab.id)}
       </p>
       <p className="mt-2 text-base font-semibold tracking-tight">
         {tab.label} tab is a scaffold today.
       </p>
-      <p className="mt-2 max-w-2xl text-sm text-neutral-600">
-        Phase 1 ships the app shell and wires the Blueprint kernel into the
-        frontend. The actual {tab.label.toLowerCase()} surface lands in the next
-        phase — see <code>App Phase {phaseFor(tab.id)}</code> in the project
-        tracker.
+      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+        Phase {phaseFor(tab.id)} ships the actual {tab.label.toLowerCase()} surface —
+        see the project roadmap for details.
       </p>
     </div>
   )
@@ -141,19 +145,21 @@ function StatusBar({
   versionError: string | null
 }) {
   return (
-    <footer className="flex items-center justify-between border-t border-neutral-200 bg-white px-6 py-2 font-mono text-[11px] text-neutral-500">
+    <footer className="flex items-center justify-between border-t border-border bg-card px-6 py-2 font-mono text-[11px] text-muted-foreground">
       {versionError ? (
-        <span className="text-red-600">Kernel error: {versionError}</span>
+        <span className="text-destructive">Kernel error: {versionError}</span>
       ) : version ? (
         <span>
-          Blueprint <b className="text-neutral-700">v{version.app}</b>
-          <span className="mx-2 text-neutral-300">·</span>
-          <b className="text-neutral-700">{version.modelCount}</b> models in catalog
+          Blueprint <b className="text-foreground">v{version.app}</b>
+          <span className="mx-2 opacity-40">·</span>
+          <b className="text-foreground">{version.modelCount}</b> models
+          <span className="mx-2 opacity-40">·</span>
+          catalog as of <b className="text-foreground">{version.catalogAsOf}</b>
         </span>
       ) : (
         <span>Loading…</span>
       )}
-      <span className="text-neutral-400">127.0.0.1 · no telemetry</span>
+      <span className="opacity-70">127.0.0.1 · no telemetry</span>
     </footer>
   )
 }
