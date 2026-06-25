@@ -33,6 +33,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/calibration"
+	"github.com/inspireailab-admin/blueprint-app/internal/samples"
 	"github.com/inspireailab-admin/blueprint/pkg/catalog"
 	"github.com/inspireailab-admin/blueprint/pkg/paths"
 )
@@ -93,6 +94,72 @@ func (a *App) GetCalibrationRun(runID string) (*calibration.Run, error) {
 // DeleteCalibrationRun removes a run + all artifacts. Irreversible.
 func (a *App) DeleteCalibrationRun(runID string) error {
 	return calibration.DeleteRun(runID)
+}
+
+// ─── Sample datasets ──────────────────────────────────────────────────────
+
+// ListSampleDatasets returns the bundled calibration sample datasets.
+// The Calibrate tab's "Load sample" picker renders these as cards.
+func (a *App) ListSampleDatasets() []samples.Sample {
+	return samples.All()
+}
+
+// SeedSampleRun creates a fresh calibration Run pre-populated with the
+// chosen sample's prompts + eval set, with "DEMO — " prefixed onto the
+// ClientLabel so the user can tell demo runs from real engagements at
+// a glance. Recommended base model + base quant are populated so the
+// imatrix step can fire without further user input.
+func (a *App) SeedSampleRun(sampleID string) (*calibration.Run, error) {
+	sample, err := samples.Get(sampleID)
+	if err != nil {
+		return nil, err
+	}
+
+	prompts, err := samples.LoadPrompts(sampleID)
+	if err != nil {
+		return nil, err
+	}
+	evalSet, err := samples.LoadEvalSet(sampleID)
+	if err != nil {
+		return nil, err
+	}
+
+	label := fmt.Sprintf("DEMO — %s", sample.Name)
+	run, err := calibration.CreateRun(label)
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist prompts (bumps phase to "prompts").
+	if _, err := calibration.SavePrompts(run.ID, prompts); err != nil {
+		_ = calibration.DeleteRun(run.ID)
+		return nil, fmt.Errorf("save prompts: %w", err)
+	}
+	// Persist eval set (does NOT bump phase past "prompts" — the eval
+	// step explicitly checks the JSONL on disk).
+	if _, err := calibration.SaveEvalSet(run.ID, evalSet); err != nil {
+		_ = calibration.DeleteRun(run.ID)
+		return nil, fmt.Errorf("save eval set: %w", err)
+	}
+
+	// Stamp the recommended base model + base quant so the user can
+	// click "Run calibration" in step 2 without picking the model
+	// again. They still need to have pulled it via Deploy.
+	if run2, err := calibration.ReadRun(run.ID); err == nil && run2 != nil {
+		run2.BaseModelID = sample.BaseModelID
+		run2.BaseQuant = sample.BaseQuant
+		_ = calibration.WriteRun(run2)
+		run = run2
+	}
+
+	a.emitRunUpdated(run.ID)
+	return run, nil
+}
+
+// LoadSampleReadme returns the per-sample README markdown — useful for
+// a "details" pane next to the picker.
+func (a *App) LoadSampleReadme(sampleID string) (string, error) {
+	return samples.LoadReadme(sampleID)
 }
 
 // SaveCalibrationPrompts persists the prompt corpus + bumps phase.
