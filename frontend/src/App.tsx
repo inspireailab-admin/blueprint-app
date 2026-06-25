@@ -8,7 +8,7 @@ import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
 import { DashboardExplorer } from './dashboard/DashboardExplorer'
 import { StartOverlay } from './start/StartOverlay'
-import { OptimizeExplorer, type ServeConfig } from './optimize/OptimizeExplorer'
+import type { ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { MonitorExplorer } from './monitor/MonitorExplorer'
 import { MaintainExplorer } from './maintain/MaintainExplorer'
@@ -17,13 +17,18 @@ import { smallestQuant } from './planner/vram'
 
 // Navigable views. `dashboard` is the operational home — Start is not in
 // here because it's a one-time-per-launch overlay, not a navigable view.
-type TabId = 'dashboard' | 'plan' | 'hardware' | 'optimize' | 'deploy' | 'monitor' | 'maintain'
+//
+// "optimize" is gone — quant, ctx size, GPU layers, and the advanced
+// runtime flags all live in the Dashboard's ServiceCard now. Plan +
+// Hardware are still here for the catalog browse + sizing math; once
+// the user has picked a model and pulled it via the installer, they
+// live entirely in the Dashboard.
+type TabId = 'dashboard' | 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain'
 
 const TABS: { id: TabId; label: string; description: string }[] = [
-  { id: 'dashboard', label: 'Dashboard', description: 'What’s running right now.' },
+  { id: 'dashboard', label: 'Dashboard', description: 'Live status. Tune sampling and server config from here.' },
   { id: 'plan', label: 'Plan', description: 'Pick a model that fits your workload.' },
   { id: 'hardware', label: 'Hardware', description: 'Size the hardware. Three configurations, no pricing.' },
-  { id: 'optimize', label: 'Optimize', description: 'Pick the quantization, context window, and GPU offload.' },
   { id: 'deploy', label: 'Deploy', description: 'Install runtime, pull the model, start serving, verify.' },
   { id: 'monitor', label: 'Monitor', description: 'Live GPU, VRAM, CPU, throughput.' },
   { id: 'maintain', label: 'Maintain', description: 'Updates, swap models, restart, logs.' },
@@ -92,10 +97,9 @@ export function App() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       {showStart && <StartOverlay onDismiss={() => void dismissStart()} />}
       <TitleBar version={version} onGoToMaintain={() => setActive('maintain')} />
+      <TabBar tabs={TABS} active={active} onSelect={setActive} />
 
       <div className="flex flex-1 overflow-hidden">
-        <SidePanel tabs={TABS} active={active} onSelect={setActive} />
-
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-8 py-8 selectable">
             <p className="eyebrow">{activeTab.label}</p>
@@ -124,21 +128,13 @@ export function App() {
                 catalogAsOf={catalogAsOf}
                 onUpdate={planner.update}
                 onBackToPlan={() => setActive('plan')}
-                onContinueToDeploy={() => setActive('optimize')}
-              />
-            ) : active === 'optimize' ? (
-              <OptimizeExplorer
-                selectedModel={selectedModel}
-                config={serveConfig}
-                onChange={setServeConfig}
-                onBackToHardware={() => setActive('hardware')}
                 onContinueToDeploy={() => setActive('deploy')}
               />
             ) : active === 'deploy' ? (
               <DeployExplorer
                 selectedModel={selectedModel}
                 serveConfig={serveConfig}
-                onBackToOptimize={() => setActive('optimize')}
+                onBackToOptimize={() => setActive('dashboard')}
               />
             ) : active === 'monitor' ? (
               <MonitorExplorer />
@@ -205,7 +201,7 @@ function TitleBar({
   )
 }
 
-function SidePanel({
+function TabBar({
   tabs,
   active,
   onSelect,
@@ -218,12 +214,8 @@ function SidePanel({
     <nav
       role="tablist"
       aria-label="Main"
-      aria-orientation="vertical"
-      className="hidden w-56 shrink-0 flex-col gap-0.5 border-r border-border bg-card px-3 py-4 sm:flex"
+      className="flex gap-1 border-b border-border bg-card px-4"
     >
-      <p className="px-3 pb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-        Navigate
-      </p>
       {tabs.map((tab) => {
         const isActive = tab.id === active
         return (
@@ -234,22 +226,13 @@ function SidePanel({
             aria-selected={isActive}
             onClick={() => onSelect(tab.id)}
             className={[
-              'group rounded-md px-3 py-2 text-left text-sm font-medium transition',
+              '-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition',
               isActive
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
             ].join(' ')}
           >
-            <span className="flex items-center gap-2">
-              <span
-                aria-hidden
-                className={[
-                  'h-1.5 w-1.5 shrink-0 rounded-full transition',
-                  isActive ? 'bg-primary' : 'bg-transparent group-hover:bg-muted-foreground/40',
-                ].join(' ')}
-              />
-              {tab.label}
-            </span>
+            {tab.label}
           </button>
         )
       })}
@@ -282,8 +265,6 @@ function phaseFor(id: TabId): number {
       return 2
     case 'hardware':
       return 3
-    case 'optimize':
-      return 3.5
     case 'deploy':
       return 4
     case 'monitor':
