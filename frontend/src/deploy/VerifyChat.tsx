@@ -6,10 +6,14 @@
 // content array per the OpenAI vision schema.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { CurrentServeConfig } from '../../wailsjs/go/main/App'
 import type { Model } from '../planner/types'
 
 const ENDPOINT = 'http://127.0.0.1:8080/v1/chat/completions'
-const API_KEY = 'blueprint-local'
+// "blueprint-local" is the direct-spawn StartServe path's bearer. If a
+// service is running llama-server instead, it generates its own key —
+// we look that up at send time so Verify keeps working in both modes.
+const FALLBACK_API_KEY = 'blueprint-local'
 
 type Message = { role: 'user' | 'assistant'; content: string; imageUrl?: string }
 
@@ -58,11 +62,22 @@ export function VerifyChat({ model }: Props) {
         return { role: m.role, content: m.content }
       })
 
+      // Look up the service's current API key. Falls back to the
+      // direct-spawn token if there's no service config — that's what
+      // the legacy in-app StartServe path uses.
+      let apiKey = FALLBACK_API_KEY
+      try {
+        const cfg = await CurrentServeConfig()
+        if (cfg?.apiKey) apiKey = cfg.apiKey
+      } catch {
+        // ignore; we'll send the fallback and let llama-server tell us
+      }
+
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${API_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ model: 'local', messages: apiMessages, stream: true }),
       })
