@@ -34,6 +34,7 @@ import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { main, svcconfig } from '../../wailsjs/go/models'
 import { DashboardChat } from './DashboardChat'
 import { PromptCacheCard } from './PromptCacheCard'
+import { RouterCard } from './RouterCard'
 import { ServiceCard } from './ServiceCard'
 
 const POLL_MS = 2000
@@ -189,6 +190,8 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       {serving && <PerformanceCard metrics={metrics} />}
 
       {serving && <PromptCacheCard />}
+
+      {serving && <RouterCard />}
 
       <ModelsOnDiskCard
         installed={installed}
