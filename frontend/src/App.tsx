@@ -11,7 +11,6 @@ import { DashboardExplorer } from './dashboard/DashboardExplorer'
 import { StartOverlay } from './start/StartOverlay'
 import type { ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
-import { MonitorExplorer } from './monitor/MonitorExplorer'
 import { MaintainExplorer } from './maintain/MaintainExplorer'
 import { AboutDialog } from './AboutDialog'
 import { smallestQuant } from './planner/vram'
@@ -24,15 +23,23 @@ import { smallestQuant } from './planner/vram'
 // Hardware are still here for the catalog browse + sizing math; once
 // the user has picked a model and pulled it via the installer, they
 // live entirely in the Dashboard.
-type TabId = 'dashboard' | 'plan' | 'hardware' | 'deploy' | 'calibrate' | 'monitor' | 'maintain'
+// Two groups of tabs, separated visually:
+//
+//   Setup wizard (linear): Plan -> Hardware -> Deploy
+//   Operational (peer):    Dashboard, Calibrate, Maintain
+//
+// Monitor is gone — its content (CPU / RAM / VRAM tiles, sparklines,
+// GPU breakdown) all lives in the Dashboard now. After the user
+// finishes the Deploy wizard the operational life of the app is
+// Dashboard-centric.
+type TabId = 'dashboard' | 'plan' | 'hardware' | 'deploy' | 'calibrate' | 'maintain'
 
 const TABS: { id: TabId; label: string; description: string }[] = [
   { id: 'dashboard', label: 'Dashboard', description: 'Live status. Tune sampling and server config from here.' },
   { id: 'plan', label: 'Plan', description: 'Pick a model that fits your workload.' },
   { id: 'hardware', label: 'Hardware', description: 'Size the hardware. Three configurations, no pricing.' },
   { id: 'deploy', label: 'Deploy', description: 'Install runtime, pull the model, start serving, verify.' },
-  { id: 'calibrate', label: 'Calibrate', description: 'Custom imatrix calibration + quantization for the client’s workload.' },
-  { id: 'monitor', label: 'Monitor', description: 'Live GPU, VRAM, CPU, throughput.' },
+  { id: 'calibrate', label: 'Calibrate', description: 'Custom imatrix calibration + quantization for a client workload.' },
   { id: 'maintain', label: 'Maintain', description: 'Updates, swap models, restart, logs.' },
 ]
 
@@ -140,8 +147,6 @@ export function App() {
               />
             ) : active === 'calibrate' ? (
               <CalibrateExplorer />
-            ) : active === 'monitor' ? (
-              <MonitorExplorer />
             ) : active === 'maintain' ? (
               <MaintainExplorer />
             ) : (
@@ -273,8 +278,6 @@ function phaseFor(id: TabId): number {
       return 4
     case 'calibrate':
       return 4.5
-    case 'monitor':
-      return 5
     case 'maintain':
       return 6
   }

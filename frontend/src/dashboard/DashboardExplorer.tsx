@@ -38,7 +38,7 @@ import { ServiceCard } from './ServiceCard'
 const POLL_MS = 2000
 const HISTORY_LEN = 60
 
-type GoTo = (tab: 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain') => void
+type GoTo = (tab: 'plan' | 'hardware' | 'deploy' | 'calibrate' | 'maintain') => void
 
 type ServeConfig = {
   quant: string
@@ -198,6 +198,8 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
         }}
         onManage={() => onGoTo('maintain')}
       />
+
+      {hasModel && <CalibrateCard onGoTo={() => onGoTo('calibrate')} />}
 
       <MaintenanceCard
         runtime={runtime}
@@ -506,6 +508,37 @@ function ModelsOnDiskCard({
 }
 
 // ─── Maintenance ────────────────────────────────────────────────────────
+
+// ─── Calibrate CTA ──────────────────────────────────────────────────────
+
+function CalibrateCard({ onGoTo }: { onGoTo: () => void }) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/5 to-card shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-6 py-5">
+        <div className="min-w-0">
+          <p className="eyebrow">Custom calibration</p>
+          <p className="mt-1 text-base font-semibold tracking-tight">
+            Quantize this model for the client&apos;s workload
+          </p>
+          <p className="mt-1 max-w-prose text-xs text-muted-foreground">
+            Pre-quantized GGUFs from HuggingFace are calibrated on a generic corpus. Run
+            <code className="mx-1 font-mono">llama-imatrix</code>
+            against the client&apos;s representative prompts and produce custom GGUFs that
+            measurably beat the stock variant on their eval set — the artefact + the report
+            are what the engagement delivers.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onGoTo}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
+        >
+          Open Calibrate →
+        </button>
+      </div>
+    </section>
+  )
+}
 
 function MaintenanceCard({
   runtime,
