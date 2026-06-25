@@ -1,24 +1,26 @@
 import { useEffect, useState } from 'react'
-import { Version } from '../wailsjs/go/main/App'
+import { InstalledModels, Version } from '../wailsjs/go/main/App'
 import type { main } from '../wailsjs/go/models'
 import { loadCatalog, findModel } from './planner/catalog'
 import { usePlannerState } from './planner/state'
 import type { Model } from './planner/types'
 import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
-import { StartExplorer } from './start/StartExplorer'
+import { DashboardExplorer } from './dashboard/DashboardExplorer'
+import { StartOverlay } from './start/StartOverlay'
 import { OptimizeExplorer, type ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { MonitorExplorer } from './monitor/MonitorExplorer'
 import { MaintainExplorer } from './maintain/MaintainExplorer'
-import { WelcomeOverlay } from './WelcomeOverlay'
 import { AboutDialog } from './AboutDialog'
 import { smallestQuant } from './planner/vram'
 
-type TabId = 'start' | 'plan' | 'hardware' | 'optimize' | 'deploy' | 'monitor' | 'maintain'
+// Navigable tabs. `dashboard` is the operational home — Start is not in
+// here because it's a one-time-per-launch overlay, not a tab.
+type TabId = 'dashboard' | 'plan' | 'hardware' | 'optimize' | 'deploy' | 'monitor' | 'maintain'
 
 const TABS: { id: TabId; label: string; description: string }[] = [
-  { id: 'start', label: 'Start', description: 'Welcome — where to go next based on what you’ve done so far.' },
+  { id: 'dashboard', label: 'Dashboard', description: 'What’s running right now.' },
   { id: 'plan', label: 'Plan', description: 'Pick a model that fits your workload.' },
   { id: 'hardware', label: 'Hardware', description: 'Size the hardware. Three configurations, no pricing.' },
   { id: 'optimize', label: 'Optimize', description: 'Pick the quantization, context window, and GPU offload.' },
@@ -28,10 +30,13 @@ const TABS: { id: TabId; label: string; description: string }[] = [
 ]
 
 export function App() {
-  // Default landing is Start — the welcome / status / "where to go next"
-  // page. The first-launch WelcomeOverlay still pops once on top of it
-  // for new users; from then on Start is the persistent home base.
-  const [active, setActive] = useState<TabId>('start')
+  // Start overlay shows on every launch as a full-screen welcome.
+  // Clicking OK dismisses it for the session; there's no way back to
+  // it from the menu (it isn't a tab) — the user is routed to
+  // Dashboard if any model is on disk, otherwise to Plan.
+  const [showStart, setShowStart] = useState(true)
+  const [active, setActive] = useState<TabId>('dashboard')
+
   const [version, setVersion] = useState<main.VersionInfo | null>(null)
   const [versionError, setVersionError] = useState<string | null>(null)
 
@@ -81,9 +86,24 @@ export function App() {
     }
   }, [selectedModel, serveConfig.quant])
 
+  // Route the user on Start-dismiss based on what's on disk. We check
+  // here (not at app start) so the Start overlay is the first thing
+  // the user sees, regardless of how fast the InstalledModels call is.
+  async function dismissStart() {
+    try {
+      const installed = await InstalledModels()
+      setActive(installed && installed.length > 0 ? 'dashboard' : 'plan')
+    } catch {
+      // If the kernel can't answer, fall back to Plan — safe default
+      // since first-time users have nothing to dashboard about anyway.
+      setActive('plan')
+    }
+    setShowStart(false)
+  }
+
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
-      <WelcomeOverlay />
+      {showStart && <StartOverlay onDismiss={() => void dismissStart()} />}
       <TitleBar version={version} onGoToMaintain={() => setActive('maintain')} />
       <TabBar tabs={TABS} active={active} onSelect={setActive} />
 
@@ -96,8 +116,8 @@ export function App() {
 
           {catalogError ? (
             <CatalogError message={catalogError} />
-          ) : active === 'start' ? (
-            <StartExplorer selectedModel={selectedModel} onGoTo={setActive} />
+          ) : active === 'dashboard' ? (
+            <DashboardExplorer onGoTo={setActive} />
           ) : active === 'plan' ? (
             <PlanExplorer
               models={models}
@@ -249,7 +269,7 @@ function PlaceholderBody({ tab }: { tab: (typeof TABS)[number] }) {
 
 function phaseFor(id: TabId): number {
   switch (id) {
-    case 'start':
+    case 'dashboard':
       return 1
     case 'plan':
       return 2
