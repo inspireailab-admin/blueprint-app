@@ -6,6 +6,7 @@ import { usePlannerState } from './planner/state'
 import type { Model } from './planner/types'
 import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
+import { StartExplorer } from './start/StartExplorer'
 import { OptimizeExplorer, type ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { MonitorExplorer } from './monitor/MonitorExplorer'
@@ -14,9 +15,10 @@ import { WelcomeOverlay } from './WelcomeOverlay'
 import { AboutDialog } from './AboutDialog'
 import { smallestQuant } from './planner/vram'
 
-type TabId = 'plan' | 'hardware' | 'optimize' | 'deploy' | 'monitor' | 'maintain'
+type TabId = 'start' | 'plan' | 'hardware' | 'optimize' | 'deploy' | 'monitor' | 'maintain'
 
 const TABS: { id: TabId; label: string; description: string }[] = [
+  { id: 'start', label: 'Start', description: 'Welcome — where to go next based on what you’ve done so far.' },
   { id: 'plan', label: 'Plan', description: 'Pick a model that fits your workload.' },
   { id: 'hardware', label: 'Hardware', description: 'Size the hardware. Three configurations, no pricing.' },
   { id: 'optimize', label: 'Optimize', description: 'Pick the quantization, context window, and GPU offload.' },
@@ -26,7 +28,10 @@ const TABS: { id: TabId; label: string; description: string }[] = [
 ]
 
 export function App() {
-  const [active, setActive] = useState<TabId>('plan')
+  // Default landing is Start — the welcome / status / "where to go next"
+  // page. The first-launch WelcomeOverlay still pops once on top of it
+  // for new users; from then on Start is the persistent home base.
+  const [active, setActive] = useState<TabId>('start')
   const [version, setVersion] = useState<main.VersionInfo | null>(null)
   const [versionError, setVersionError] = useState<string | null>(null)
 
@@ -91,6 +96,8 @@ export function App() {
 
           {catalogError ? (
             <CatalogError message={catalogError} />
+          ) : active === 'start' ? (
+            <StartExplorer selectedModel={selectedModel} onGoTo={setActive} />
           ) : active === 'plan' ? (
             <PlanExplorer
               models={models}
@@ -242,6 +249,8 @@ function PlaceholderBody({ tab }: { tab: (typeof TABS)[number] }) {
 
 function phaseFor(id: TabId): number {
   switch (id) {
+    case 'start':
+      return 1
     case 'plan':
       return 2
     case 'hardware':
