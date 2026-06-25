@@ -17,22 +17,21 @@
 // StartMonitoring is idempotent on the Go side, so Monitor + Dashboard
 // can both be mounted without doubling the polling rate.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   BlueprintDataSummary,
+  CurrentServeConfig,
   InstalledModels,
   LatestRuntimeVersion,
   LlamaMetrics,
   RuntimeStatus,
-  ServerStatus,
+  ServiceInfo,
   Snapshot,
   StartMonitoring,
-  StartServe,
   StopMonitoring,
-  StopServe,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import type { main } from '../../wailsjs/go/models'
+import type { main, svcconfig } from '../../wailsjs/go/models'
 import { DashboardChat } from './DashboardChat'
 import { ServiceCard } from './ServiceCard'
 
@@ -50,8 +49,8 @@ type ServeConfig = {
 type Props = {
   onGoTo: GoTo
   serveConfig: ServeConfig
-  /** Called when the Dashboard quick-starts a model so App can remember
-   *  the selection (used by Optimize / Deploy if user clicks through). */
+  /** Called by ModelsOnDiskCard's Serve buttons to pre-select a model
+   *  before routing the user to Plan / Deploy. */
   onSelectModel: (modelId: string) => void
 }
 
@@ -59,27 +58,15 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
   const [installed, setInstalled] = useState<main.InstalledModel[] | null>(null)
   const [runtime, setRuntime] = useState<main.RuntimeStatus | null>(null)
   const [runtimeUpdate, setRuntimeUpdate] = useState<main.RuntimeUpdate | null>(null)
-  const [server, setServer] = useState<main.ServerStatus | null>(null)
+  const [svcInfo, setSvcInfo] = useState<main.ServiceInfo | null>(null)
+  const [svcConfig, setSvcConfig] = useState<svcconfig.Config | null>(null)
   const [snap, setSnap] = useState<main.Snapshot | null>(null)
   const [dataSummary, setDataSummary] = useState<main.BlueprintDataSummary | null>(null)
   const [metrics, setMetrics] = useState<main.LlamaMetrics | null>(null)
 
-  // Local "action in flight" flags. Set synchronously on click so the
-  // button paints the spinner state immediately — without these the
-  // UI would freeze for 4-5 s while StartServe is in flight, since
-  // React can't repaint between the click and the await resolving.
-  const [startInFlight, setStartInFlight] = useState(false)
-  const [stopInFlight, setStopInFlight] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
-
   const [cpuHistory, setCpuHistory] = useState<number[]>([])
   const [ramHistory, setRamHistory] = useState<number[]>([])
   const [vramHistory, setVramHistory] = useState<number[]>([])
-
-  // Uptime tracking — client-side, keyed on PID so a restart resets it.
-  const uptimePidRef = useRef<number | null>(null)
-  const [uptimeStartedAt, setUptimeStartedAt] = useState<number | null>(null)
-  const [, setNow] = useState(0) // forces a re-render once a second
 
   useEffect(() => {
     void refreshAll()
@@ -93,51 +80,43 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       const pct = totalAll > 0 ? (totalUsed / totalAll) * 100 : 0
       setVramHistory((prev) => trim([...prev, pct]))
     })
-    const offServe = EventsOn('deploy:serve-status', () => {
-      void ServerStatus().then(setServer)
-    })
 
     StartMonitoring(POLL_MS)
-    const tick = setInterval(() => setNow(Date.now()), 1000)
     return () => {
       offSnap()
-      offServe()
-      clearInterval(tick)
       StopMonitoring()
     }
   }, [])
 
-  // Reset uptime clock whenever PID changes (start / restart).
+  // Poll the service every 2 s — it's a cheap local SCM call. Drives
+  // the gating for the chat + metrics + performance cards below.
   useEffect(() => {
-    if (server?.state === 'running' && server.pid) {
-      if (uptimePidRef.current !== server.pid) {
-        uptimePidRef.current = server.pid
-        setUptimeStartedAt(Date.now())
+    let alive = true
+    const tick = async () => {
+      try {
+        const [i, c] = await Promise.all([ServiceInfo(), CurrentServeConfig()])
+        if (!alive) return
+        setSvcInfo(i)
+        setSvcConfig(c)
+      } catch {
+        // Non-fatal — keep last known state.
       }
-    } else {
-      uptimePidRef.current = null
-      setUptimeStartedAt(null)
     }
-  }, [server?.state, server?.pid])
-
-  // Clear the in-flight flags as soon as the backend confirms the
-  // requested state transition. Belt-and-braces — they also clear in
-  // the catch handlers — but this is the success path.
-  useEffect(() => {
-    if (server?.state === 'running') {
-      setStartInFlight(false)
-    } else if (server?.state === 'stopped') {
-      setStartInFlight(false)
-      setStopInFlight(false)
+    void tick()
+    const id = setInterval(tick, 2000)
+    return () => {
+      alive = false
+      clearInterval(id)
     }
-  }, [server?.state])
+  }, [])
 
-  // Poll llama-server's /metrics while it's running. 3 s cadence is
-  // a sensible default — the counters tick over fast under load and
-  // we don't want to be janky, but we also don't want a thundering
-  // herd of HTTP calls when the server is idle.
+  const serving = svcInfo?.scmState === 'running' && svcInfo?.phase === 'running'
+
+  // Poll llama-server's /metrics only when the service supervisor
+  // reports an active child. 3 s cadence — fast enough to look live,
+  // slow enough not to spam the local HTTP loop.
   useEffect(() => {
-    if (server?.state !== 'running') {
+    if (!serving) {
       setMetrics(null)
       return
     }
@@ -156,88 +135,38 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       alive = false
       clearInterval(id)
     }
-  }, [server?.state])
+  }, [serving])
 
   async function refreshAll() {
-    const [im, rt, srv, sn, ds] = await Promise.all([
+    const [im, rt, sn, ds] = await Promise.all([
       InstalledModels(),
       RuntimeStatus(),
-      ServerStatus(),
       Snapshot(),
       BlueprintDataSummary(),
     ])
     setInstalled(im ?? [])
     setRuntime(rt)
-    setServer(srv)
     setSnap(sn)
     setDataSummary(ds)
-    // Update check runs in the background — slow, network-bound, don't block.
     LatestRuntimeVersion()
       .then(setRuntimeUpdate)
       .catch(() => setRuntimeUpdate(null))
   }
 
-  const running = server?.state === 'running'
   const hasModel = (installed?.length ?? 0) > 0
   const runtimeReady = !!runtime?.installed
-
-  const quickStartModel =
-    installed?.find((m) => m.quant === serveConfig.quant) ?? installed?.[0] ?? null
-
-  function quickStart() {
-    if (!quickStartModel) {
-      onGoTo('plan')
-      return
-    }
-    if (!runtimeReady) {
-      onSelectModel(quickStartModel.id)
-      onGoTo('deploy')
-      return
-    }
-    onSelectModel(quickStartModel.id)
-    // Flip the local flag BEFORE awaiting anything so the button paints
-    // its loading state immediately. Don't await StartServe — the
-    // deploy:serve-status subscription will drive us to 'starting' →
-    // 'running'. A .catch handler clears the flag on failure.
-    setStartInFlight(true)
-    setActionError(null)
-    StartServe(
-      quickStartModel.id,
-      quickStartModel.quant,
-      serveConfig.ctxSize,
-      serveConfig.nGpuLayers,
-    ).catch((err: unknown) => {
-      setActionError(err instanceof Error ? err.message : String(err))
-      setStartInFlight(false)
-    })
-  }
-
-  function stopServe() {
-    setStopInFlight(true)
-    setActionError(null)
-    StopServe().catch((err: unknown) => {
-      setActionError(err instanceof Error ? err.message : String(err))
-      setStopInFlight(false)
-    })
-  }
-
-  const uptime = uptimeStartedAt ? Date.now() - uptimeStartedAt : 0
+  const currentServingId = serving ? svcInfo?.modelId : undefined
 
   return (
     <div className="mt-8 space-y-6">
-      <ServiceCard onSelectModel={onSelectModel} />
-
-      <ServerHero
-        server={server}
-        runtime={runtime}
-        hasModel={hasModel}
-        quickStartModel={quickStartModel}
-        uptimeMs={uptime}
-        startInFlight={startInFlight}
-        stopInFlight={stopInFlight}
-        actionError={actionError}
-        onQuickStart={quickStart}
-        onStop={stopServe}
+      <ServiceCard
+        installed={installed}
+        defaults={{
+          quant: serveConfig.quant,
+          ctxSize: serveConfig.ctxSize,
+          nGpuLayers: serveConfig.nGpuLayers,
+        }}
+        onPickModel={() => onGoTo('plan')}
       />
 
       <SystemTiles
@@ -249,18 +178,19 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
 
       {snap && snap.gpus.length > 0 && <GpuBreakdown snap={snap} />}
 
-      {running && server && <DashboardChat server={server} />}
-
-      {running && server && (
-        <ServerConfigCard server={server} serveConfig={serveConfig} onChangeConfig={() => onGoTo('optimize')} />
+      {serving && svcConfig && (
+        <DashboardChat
+          port={svcConfig.port}
+          apiKey={svcConfig.apiKey}
+        />
       )}
 
-      {running && <PerformanceCard metrics={metrics} />}
+      {serving && <PerformanceCard metrics={metrics} />}
 
       <ModelsOnDiskCard
         installed={installed}
-        currentServingId={server?.modelId}
-        running={running}
+        currentServingId={currentServingId}
+        running={serving}
         onPickAnother={() => onGoTo('plan')}
         onServe={(m) => {
           onSelectModel(m.id)
@@ -280,153 +210,11 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       <RecommendationsCard
         snap={snap}
         runtimeUpdate={runtimeUpdate}
-        running={running}
+        running={serving}
         hasModel={hasModel}
         runtimeReady={runtimeReady}
       />
     </div>
-  )
-}
-
-// ─── Server hero ────────────────────────────────────────────────────────
-
-function ServerHero({
-  server,
-  runtime,
-  hasModel,
-  quickStartModel,
-  uptimeMs,
-  startInFlight,
-  stopInFlight,
-  actionError,
-  onQuickStart,
-  onStop,
-}: {
-  server: main.ServerStatus | null
-  runtime: main.RuntimeStatus | null
-  hasModel: boolean
-  quickStartModel: main.InstalledModel | null
-  uptimeMs: number
-  startInFlight: boolean
-  stopInFlight: boolean
-  actionError: string | null
-  onQuickStart: () => void
-  onStop: () => void
-}) {
-  // Combine local in-flight flag with backend 'starting' state — either
-  // means "we're in the middle of bringing the server up."
-  const starting = startInFlight || server?.state === 'starting'
-  const running = server?.state === 'running'
-  const runtimeReady = !!runtime?.installed
-
-  // CTA when stopped — the obvious next action given what the user has.
-  const cta = (() => {
-    if (running || starting) return null
-    if (!hasModel) return { label: 'Pick a model' }
-    if (!runtimeReady) return { label: 'Install runtime' }
-    return { label: `Start server — ${quickStartModel?.displayName ?? 'model'}` }
-  })()
-
-  return (
-    <section
-      className={[
-        'overflow-hidden rounded-2xl border shadow-sm',
-        running ? 'border-chart-4/40 bg-chart-4/5' : starting ? 'border-chart-5/40 bg-chart-5/5' : 'border-border bg-card',
-      ].join(' ')}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-4 px-6 py-5">
-        <div className="min-w-0">
-          <p className="eyebrow">Server</p>
-          {starting ? (
-            <>
-              <p className="mt-1 flex items-center gap-2 text-xl font-semibold tracking-tight">
-                <Spinner /> Starting llama-server…
-              </p>
-              <p className="mt-1 max-w-prose text-xs text-muted-foreground">
-                Loading <b>{quickStartModel?.displayName ?? server?.modelId ?? 'model'}</b>{' '}
-                <span className="font-mono">{(quickStartModel?.quant ?? server?.quant ?? '').toUpperCase()}</span>
-                {' '}— mmaping weights and warming the KV cache. First boot of a big model can take a few seconds.
-              </p>
-            </>
-          ) : running ? (
-            <>
-              <p className="mt-1 flex items-center gap-2 text-xl font-semibold tracking-tight">
-                <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-chart-4" />
-                Serving <span className="font-mono">{server!.modelId}</span>
-              </p>
-              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                {server!.quant?.toUpperCase()}
-                <span className="mx-2 opacity-40">·</span>
-                port {server!.port}
-                <span className="mx-2 opacity-40">·</span>
-                pid {server!.pid}
-                <span className="mx-2 opacity-40">·</span>
-                up {formatDuration(uptimeMs)}
-                <span className="mx-2 opacity-40">·</span>
-                <span>http://127.0.0.1:{server!.port}/v1</span>
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="mt-1 text-xl font-semibold tracking-tight">Not running</p>
-              <p className="mt-1 max-w-prose text-xs text-muted-foreground">
-                {!hasModel
-                  ? 'No model on disk yet — pick one from the catalog first.'
-                  : !runtimeReady
-                    ? 'llama.cpp runtime isn’t installed yet. The Deploy tab handles the one-time install.'
-                    : `Ready to serve ${quickStartModel?.displayName ?? 'a model'} — click below to start the local OpenAI-compatible API.`}
-              </p>
-              {actionError && (
-                <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-1.5 font-mono text-[11px] text-destructive">
-                  {actionError}
-                </p>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {starting ? (
-            <button
-              type="button"
-              disabled
-              className="inline-flex items-center gap-2 rounded-md bg-primary/70 px-5 py-2 text-sm font-semibold text-primary-foreground shadow-sm"
-            >
-              <Spinner /> Starting…
-            </button>
-          ) : running ? (
-            <button
-              type="button"
-              onClick={onStop}
-              disabled={stopInFlight}
-              className="inline-flex items-center gap-2 rounded-md border border-destructive/40 bg-background px-4 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/5 disabled:opacity-60"
-            >
-              {stopInFlight && <Spinner />}
-              {stopInFlight ? 'Stopping…' : 'Stop server'}
-            </button>
-          ) : (
-            cta && (
-              <button
-                type="button"
-                onClick={onQuickStart}
-                className="rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
-              >
-                {cta.label} →
-              </button>
-            )
-          )}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function Spinner() {
-  return (
-    <span
-      aria-hidden
-      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
-    />
   )
 }
 
@@ -542,48 +330,6 @@ function GpuBreakdown({ snap }: { snap: main.Snapshot }) {
           </li>
         ))}
       </ul>
-    </section>
-  )
-}
-
-// ─── Server config ──────────────────────────────────────────────────────
-
-function ServerConfigCard({
-  server,
-  serveConfig,
-  onChangeConfig,
-}: {
-  server: main.ServerStatus
-  serveConfig: ServeConfig
-  onChangeConfig: () => void
-}) {
-  return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
-        <div>
-          <h2 className="text-base font-semibold tracking-tight">Server config</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Startup parameters — changing these requires a restart.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onChangeConfig}
-          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition hover:bg-muted"
-        >
-          Edit in Optimize →
-        </button>
-      </header>
-      <dl className="grid gap-x-6 gap-y-2 px-6 py-4 text-sm sm:grid-cols-2">
-        <KV k="Model" v={server.modelId ?? '—'} mono />
-        <KV k="Quantization" v={(server.quant ?? serveConfig.quant).toUpperCase()} mono />
-        <KV k="Context window" v={`${serveConfig.ctxSize.toLocaleString()} tokens`} mono />
-        <KV
-          k="GPU layers"
-          v={serveConfig.nGpuLayers >= 999 ? 'All available' : String(serveConfig.nGpuLayers)}
-          mono
-        />
-      </dl>
     </section>
   )
 }
@@ -1015,13 +761,3 @@ function humanBytes(n: number): string {
   return `${v.toFixed(1)} ${units[i]}`
 }
 
-function formatDuration(ms: number): string {
-  if (ms <= 0) return '0s'
-  const s = Math.floor(ms / 1000)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  if (h > 0) return `${h}h ${m}m`
-  if (m > 0) return `${m}m ${sec}s`
-  return `${sec}s`
-}
