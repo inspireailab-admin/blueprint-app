@@ -118,7 +118,12 @@ export function MaintainExplorer() {
             if (s.state === 'stopped') break
             await new Promise((r) => setTimeout(r, 200))
           }
-          await StartServe(server.modelId, server.quant)
+          // Restart uses 0 / -1 sentinels — deploy.go interprets these
+          // as the safe defaults (4096 ctx, all GPU layers). Maintain
+          // doesn't have the Optimize tab's serveConfig in scope; if
+          // the user wants different values, they restart through
+          // Deploy.
+          await StartServe(server.modelId, server.quant, 0, -1)
           setBusy(null)
         }}
       />
