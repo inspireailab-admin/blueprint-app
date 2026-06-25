@@ -9,6 +9,7 @@ import { HardwareExplorer } from './hardware/HardwareExplorer'
 import { CalibrateExplorer } from './calibrate/CalibrateExplorer'
 import { DashboardExplorer } from './dashboard/DashboardExplorer'
 import { StartOverlay } from './start/StartOverlay'
+import { LicenseGate } from './license/LicenseGate'
 import type { ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { MaintainExplorer } from './maintain/MaintainExplorer'
@@ -105,6 +106,7 @@ export function App() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {showStart && <StartOverlay onDismiss={() => void dismissStart()} />}
+      <LicenseGate />
       <TitleBar version={version} onGoToMaintain={() => setActive('maintain')} />
       <TabBar tabs={TABS} active={active} onSelect={setActive} />
 
