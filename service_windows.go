@@ -285,6 +285,17 @@ type ServeConfigInput struct {
 	// LoRA adapter to load on top of the base model. Empty = none.
 	LoraAdapter string  `json:"loraAdapter,omitempty"`
 	LoraScale   float64 `json:"loraScale,omitempty"`
+
+	// Engine selects the inference runtime. Empty = llama-cpp (default).
+	// Other valid values: "vllm" | "trt-llm" (only effective when the
+	// corresponding Python feature is installed).
+	Engine string `json:"engine,omitempty"`
+
+	// ModelPathOverride lets engine-specific identifiers override the
+	// catalog-resolved GGUF path. Used by vLLM (HF id) and TRT-LLM
+	// (engine plan directory). When empty we resolve from ModelID +
+	// Quant against the catalog like before.
+	ModelPathOverride string `json:"modelPathOverride,omitempty"`
 }
 
 // LoraAdapterEntry is one .gguf/.bin LoRA adapter discovered on disk.
@@ -345,26 +356,37 @@ func (a *App) ListLoraAdapters() ([]LoraAdapterEntry, error) {
 // expected to follow with RestartManagedServer to make the supervisor
 // actually pick up the change.
 func (a *App) ApplyServeConfig(in ServeConfigInput) error {
-	if in.ModelID == "" || in.Quant == "" {
-		return errors.New("model and quant are required")
+	// When ModelPathOverride is set (vLLM HF identifier, TRT-LLM engine
+	// plan dir), we trust it verbatim and skip the catalog. The local
+	// catalog only knows about llama.cpp-flavored GGUFs.
+	var modelPath string
+	if in.ModelPathOverride != "" {
+		modelPath = in.ModelPathOverride
+	} else {
+		if in.ModelID == "" || in.Quant == "" {
+			return errors.New("model and quant are required")
+		}
+		model, err := catalog.Get(in.ModelID)
+		if err != nil {
+			return err
+		}
+		fileName, ok := model.QuantFiles()[in.Quant]
+		if !ok {
+			return fmt.Errorf("no %s GGUF for model %s", in.Quant, in.ModelID)
+		}
+		modelPath, err = paths.ModelFile(in.ModelID, fileName)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(modelPath); err != nil {
+			return fmt.Errorf("model GGUF not on disk: %s — pull it first", modelPath)
+		}
 	}
-	model, err := catalog.Get(in.ModelID)
-	if err != nil {
-		return err
-	}
-	fileName, ok := model.QuantFiles()[in.Quant]
-	if !ok {
-		return fmt.Errorf("no %s GGUF for model %s", in.Quant, in.ModelID)
-	}
-	modelPath, err := paths.ModelFile(in.ModelID, fileName)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(modelPath); err != nil {
-		return fmt.Errorf("model GGUF not on disk: %s — pull it first", modelPath)
-	}
+
+	// LlamaServerBin is preserved for back-compat with older configs.
+	// The supervisor today resolves the binary via engines.Get(cfg.Engine).
 	bin, err := bpruntime.Find()
-	if err != nil {
+	if err != nil && in.Engine == "" {
 		return fmt.Errorf("runtime not installed: %w", err)
 	}
 
@@ -435,6 +457,7 @@ func (a *App) ApplyServeConfig(in ServeConfigInput) error {
 		LogVerbose:    in.LogVerbose,
 		LoraAdapter:   in.LoraAdapter,
 		LoraScale:     in.LoraScale,
+		Engine:        in.Engine,
 	}
 	return svcconfig.WriteConfig(cfg)
 }

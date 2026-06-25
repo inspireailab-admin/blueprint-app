@@ -35,6 +35,7 @@ import type { main, svcconfig } from '../../wailsjs/go/models'
 import { DashboardChat } from './DashboardChat'
 import { PromptCacheCard } from './PromptCacheCard'
 import { PythonRuntimeCard } from './PythonRuntimeCard'
+import { RemoteServersCard } from './RemoteServersCard'
 import { RouterCard } from './RouterCard'
 import { ServiceCard } from './ServiceCard'
 import { TrainCard } from './TrainCard'
@@ -198,6 +199,8 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       <PythonRuntimeCard />
 
       <TrainCard />
+
+      <RemoteServersCard />
 
       <ModelsOnDiskCard
         installed={installed}

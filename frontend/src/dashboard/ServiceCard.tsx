@@ -34,6 +34,7 @@ import {
   StopManagedServer,
 } from '../../wailsjs/go/main/App'
 import type { main, svcconfig } from '../../wailsjs/go/models'
+import { EngineDisclosure } from './EngineDisclosure'
 
 type ServeConfigDefaults = {
   quant: string
@@ -332,6 +333,8 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
         />
         <KV k="Restart count" v={String(info.restartCount ?? 0)} mono />
       </dl>
+
+      <EngineDisclosure config={config} disabled={actionInFlight !== null} />
 
       <OptimizeDisclosure
         config={config}

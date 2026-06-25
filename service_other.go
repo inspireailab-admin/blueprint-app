@@ -50,6 +50,8 @@ type ServeConfigInput struct {
 	LogVerbose    bool    `json:"logVerbose,omitempty"`
 	LoraAdapter   string  `json:"loraAdapter,omitempty"`
 	LoraScale     float64 `json:"loraScale,omitempty"`
+	Engine        string  `json:"engine,omitempty"`
+	ModelPathOverride string `json:"modelPathOverride,omitempty"`
 }
 
 type LoraAdapterEntry struct {
