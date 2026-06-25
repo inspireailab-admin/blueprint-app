@@ -1,26 +1,26 @@
 // Package license handles Blueprint's commercial-license + trial
-// state. No phone-home — the whole point of the product is "runs on
+// state. No phone-home â€” the whole point of the product is "runs on
 // your hardware." License keys are issued by a separate Stripe-driven
 // signing service (out of repo) and validated locally with an
 // embedded Ed25519 public key.
 //
 // Four runtime states the UI cares about:
 //
-//   personal       — user told us they're using Blueprint for
+//   personal       â€” user told us they're using Blueprint for
 //                    personal / learning / academic work. No license
 //                    required. No nag. Default for first launch
 //                    after the user picks "Personal" in the modal.
 //
-//   trialing       — user picked "Commercial" on first launch.
+//   trialing       â€” user picked "Commercial" on first launch.
 //                    14-day trial; banner appears at day 10.
 //
-//   trial_expired  — 14 days elapsed without a license entered.
+//   trial_expired  â€” 14 days elapsed without a license entered.
 //                    Persistent banner: "Trial expired, buy a
 //                    commercial license." Tool itself keeps working
-//                    — same honor-system approach as LM Studio /
+//                    â€” same honor-system approach as LM Studio /
 //                    AnythingLLM.
 //
-//   licensed       — a valid signed license key is on disk. Banner
+//   licensed       â€” a valid signed license key is on disk. Banner
 //                    shows plan + expiry. Renews automatically when
 //                    the user pastes a new key.
 //
@@ -40,7 +40,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/inspireailab-admin/blueprint/pkg/paths"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 )
 
 // Status is one of the four state strings above. Plus "uninitialized"
@@ -106,14 +106,14 @@ type Snapshot struct {
 	License        *License `json:"license,omitempty"`
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 var (
 	mu sync.Mutex
 	st *State
 )
 
-// Load reads license.json. Missing file → empty state.
+// Load reads license.json. Missing file â†’ empty state.
 func Load() (*State, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -131,7 +131,7 @@ func Load() (*State, error) {
 }
 
 // CurrentSnapshot returns the live snapshot the UI reads on every
-// poll. Lightweight — no I/O when state is already loaded.
+// poll. Lightweight â€” no I/O when state is already loaded.
 func CurrentSnapshot() Snapshot {
 	state, err := Load()
 	if err != nil || state == nil {
@@ -188,7 +188,7 @@ func EnterLicenseKey(key string) error {
 	}
 	st.LicenseKey = key
 	st.License = parsed
-	// A commercial license implies commercial use type — auto-promote
+	// A commercial license implies commercial use type â€” auto-promote
 	// so the user doesn't have to do two things.
 	if st.UseType != "commercial" {
 		st.UseType = "commercial"
@@ -215,7 +215,7 @@ func ClearLicense() error {
 	return writeToDiskLocked()
 }
 
-// ─── Key validation ──────────────────────────────────────────────────────
+// â”€â”€â”€ Key validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // licenseSigningPubKeyHex is the Ed25519 public key the signing
 // service uses for production licenses. **Replace this with your
@@ -228,7 +228,7 @@ func ClearLicense() error {
 // This value is a development placeholder generated with
 //   crypto/ed25519.GenerateKey + hex.EncodeToString(pub).
 // Until it's replaced, every key the signing server emits with the
-// matching private half will validate — useful for local testing of
+// matching private half will validate â€” useful for local testing of
 // the UI flow.
 const licenseSigningPubKeyHex = "d5da5f1a7c01d8b9a4f8b04c91d6b81fe2c5b6e83a47c14ad07cf6e3b5a4f9b7"
 
@@ -265,7 +265,7 @@ func ValidateKey(key string) (*License, error) {
 		return nil, fmt.Errorf("embedded license public key is malformed")
 	}
 	if !ed25519.Verify(ed25519.PublicKey(pubKey), payload, sig) {
-		return nil, fmt.Errorf("license signature does not verify — wrong key or tampered payload")
+		return nil, fmt.Errorf("license signature does not verify â€” wrong key or tampered payload")
 	}
 
 	var lic License
@@ -278,7 +278,7 @@ func ValidateKey(key string) (*License, error) {
 	return &lic, nil
 }
 
-// ─── Snapshot computation ────────────────────────────────────────────────
+// â”€â”€â”€ Snapshot computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func computeSnapshot(s *State) Snapshot {
 	out := Snapshot{
@@ -302,7 +302,7 @@ func computeSnapshot(s *State) Snapshot {
 		out.License = s.License
 		expSoon := s.License.ExpiresAt > 0 && time.Until(time.UnixMilli(s.License.ExpiresAt)) < 14*24*time.Hour
 		if expSoon {
-			out.Banner = fmt.Sprintf("Your %s license expires on %s — renew to keep commercial use covered.",
+			out.Banner = fmt.Sprintf("Your %s license expires on %s â€” renew to keep commercial use covered.",
 				strings.Title(s.License.Plan),
 				time.UnixMilli(s.License.ExpiresAt).Format("2006-01-02"))
 			out.BannerLevel = "warn"
@@ -333,7 +333,7 @@ func computeSnapshot(s *State) Snapshot {
 	return out
 }
 
-// ─── Persistence ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func storagePath() (string, error) {
 	root, err := paths.Root()

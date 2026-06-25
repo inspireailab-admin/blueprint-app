@@ -4,14 +4,14 @@
 //
 // Event names emitted from this file (all string payloads where not noted):
 //
-//   deploy:runtime-stage    {stage, detail}     — locating / downloading / extracting / done
-//   deploy:runtime-progress {bytes, total, bps} — runtime download bytes
-//   deploy:pull-progress    {bytes, total, bps} — model GGUF download bytes
-//   deploy:serve-log        {line}              — llama-server stdout/stderr line
-//   deploy:serve-status     {state, port, pid}  — running / starting / stopped
+//   deploy:runtime-stage    {stage, detail}     â€” locating / downloading / extracting / done
+//   deploy:runtime-progress {bytes, total, bps} â€” runtime download bytes
+//   deploy:pull-progress    {bytes, total, bps} â€” model GGUF download bytes
+//   deploy:serve-log        {line}              â€” llama-server stdout/stderr line
+//   deploy:serve-status     {state, port, pid}  â€” running / starting / stopped
 //
 // Long-running methods (InstallRuntime, PullModel, StartServe) return as
-// soon as the work is kicked off in a goroutine — the UI listens to the
+// soon as the work is kicked off in a goroutine â€” the UI listens to the
 // events to track progress.
 
 package main
@@ -33,15 +33,15 @@ import (
 	"time"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
-	"github.com/inspireailab-admin/blueprint/pkg/catalog"
-	"github.com/inspireailab-admin/blueprint/pkg/download"
-	"github.com/inspireailab-admin/blueprint/pkg/paths"
-	"github.com/inspireailab-admin/blueprint/pkg/runtime"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/catalog"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/download"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/runtime"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// ─── Runtime status ────────────────────────────────────────────────────────
+// â”€â”€â”€ Runtime status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // RuntimeStatus reports whether llama.cpp is installed and where it lives.
 type RuntimeStatus struct {
@@ -88,7 +88,7 @@ func (a *App) InstallRuntime() error {
 	return nil
 }
 
-// ─── Model pull ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Model pull â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // ModelStatus reports whether the given model + quant GGUF is on disk.
 type ModelStatus struct {
@@ -152,7 +152,7 @@ func (a *App) PullModel(modelID, quant string) error {
 	return nil
 }
 
-// ─── Serve ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Serve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const (
 	localAPIKey = "blueprint-local"
@@ -203,7 +203,7 @@ func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
 	serveMu.Lock()
 	if serveProc != nil {
 		serveMu.Unlock()
-		return fmt.Errorf("llama-server is already running for %s — stop it first", serveModel)
+		return fmt.Errorf("llama-server is already running for %s â€” stop it first", serveModel)
 	}
 	serveMu.Unlock()
 
@@ -290,7 +290,7 @@ func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
 		}
 	}()
 
-	// Reap the subprocess when it exits — clears the state so the
+	// Reap the subprocess when it exits â€” clears the state so the
 	// next StartServe call can proceed.
 	go func() {
 		_ = cmd.Wait()
@@ -373,15 +373,15 @@ func waitForReady(ctx context.Context, port int, timeout time.Duration) bool {
 // helpers grow later); silences staticcheck if Phase 4.x grows.
 var _ = filepath.Base
 
-// ─── llama-server metrics ──────────────────────────────────────────────────
+// â”€â”€â”€ llama-server metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // LlamaMetrics is the parsed snapshot of llama-server's Prometheus
 // metrics endpoint. All counters/gauges that aren't in the response
-// stay at zero — `Available` is the only field that signals
+// stay at zero â€” `Available` is the only field that signals
 // "actually got data."
 //
 // The names track llama-server's exposed metric labels. Different
-// llama.cpp builds use slightly different metric names — we parse
+// llama.cpp builds use slightly different metric names â€” we parse
 // defensively and fall back to zero on anything we don't recognize.
 type LlamaMetrics struct {
 	Available             bool    `json:"available"`
@@ -398,12 +398,12 @@ type LlamaMetrics struct {
 // LlamaMetrics scrapes the /metrics endpoint of whatever llama-server
 // is currently running on this machine.
 //
-// Two sources of "where to look": the service config (the new path —
+// Two sources of "where to look": the service config (the new path â€”
 // the supervisor runs llama-server with the configured port + key) and
 // the legacy in-app constants (the old direct-spawn path on 8080 with
 // "blueprint-local"). We prefer the service config when present.
 //
-// Returns `Available: false` when the scrape fails — the UI shows
+// Returns `Available: false` when the scrape fails â€” the UI shows
 // dashes in that case rather than stale numbers.
 func (a *App) LlamaMetrics() LlamaMetrics {
 	port := servePort

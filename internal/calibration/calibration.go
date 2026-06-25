@@ -2,16 +2,16 @@
 // runs. Each run is a self-contained directory holding:
 //
 //	~/.blueprint/calibration/<runID>/
-//	├── meta.json           — run metadata (timestamps, target model, status)
-//	├── prompts.txt         — user-supplied calibration corpus (one prompt per line)
-//	├── eval.jsonl          — optional evaluation set: {prompt, expected[, judge]}
-//	├── imatrix.dat         — output of llama-imatrix
-//	├── quants/             — custom-calibrated GGUFs (one per target quant)
-//	├── eval-results.json   — per-candidate quality + perf measurements
-//	└── report.md           — client-ready summary
+//	â”œâ”€â”€ meta.json           â€” run metadata (timestamps, target model, status)
+//	â”œâ”€â”€ prompts.txt         â€” user-supplied calibration corpus (one prompt per line)
+//	â”œâ”€â”€ eval.jsonl          â€” optional evaluation set: {prompt, expected[, judge]}
+//	â”œâ”€â”€ imatrix.dat         â€” output of llama-imatrix
+//	â”œâ”€â”€ quants/             â€” custom-calibrated GGUFs (one per target quant)
+//	â”œâ”€â”€ eval-results.json   â€” per-candidate quality + perf measurements
+//	â””â”€â”€ report.md           â€” client-ready summary
 //
 // The point of the structure is that each run is shareable, archivable,
-// and reproducible — a Blueprint consulting engagement produces one
+// and reproducible â€” a Blueprint consulting engagement produces one
 // directory as its deliverable.
 package calibration
 
@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/inspireailab-admin/blueprint/pkg/paths"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 )
 
 // Phase tracks where a run is in the calibrate-quantize-evaluate flow.
@@ -45,7 +45,7 @@ const (
 // Run is the persisted metadata for a single calibration engagement.
 //
 // Timestamps are unix milliseconds rather than time.Time because Wails
-// can't marshal time.Time across the JS bridge — Number is the common
+// can't marshal time.Time across the JS bridge â€” Number is the common
 // language for date math on both sides.
 type Run struct {
 	ID            string   `json:"id"`
@@ -89,7 +89,7 @@ func RunDir(runID string) (string, error) {
 	return filepath.Join(root, runID), nil
 }
 
-// File paths inside a run directory — central so callers don't sprinkle
+// File paths inside a run directory â€” central so callers don't sprinkle
 // filename literals everywhere.
 
 func metaPath(runID string) (string, error)         { return inRun(runID, "meta.json") }
@@ -205,7 +205,7 @@ func ListRuns() ([]*Run, error) {
 }
 
 // DeleteRun removes a run directory and everything in it. Used for
-// "throw this away, start over" — there's no undo.
+// "throw this away, start over" â€” there's no undo.
 func DeleteRun(runID string) error {
 	dir, err := RunDir(runID)
 	if err != nil {
@@ -277,7 +277,7 @@ func SaveEvalSet(runID string, content string) (*Run, error) {
 		}
 	}
 	if count == 0 {
-		return nil, fmt.Errorf("no valid {\"prompt\": …} lines found")
+		return nil, fmt.Errorf("no valid {\"prompt\": â€¦} lines found")
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return nil, err
@@ -303,12 +303,12 @@ func normalizePrompts(content string) (string, int) {
 	return strings.Join(lines, "\n") + "\n", len(lines)
 }
 
-// ─── Run IDs ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Run IDs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // newRunID returns a short, sortable, URL-safe identifier.
 // Format: YYYYMMDD-HHMMSS-<6 hex>. Sortable, human-recognizable, no
 // collisions in practice unless the user smashes the Create button
-// inside the same millisecond — guarded by a process-local mutex
+// inside the same millisecond â€” guarded by a process-local mutex
 // would be overkill for a desktop app.
 func newRunID() string {
 	now := time.Now().UTC()

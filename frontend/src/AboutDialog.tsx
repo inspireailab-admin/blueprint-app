@@ -1,6 +1,6 @@
 // About dialog. Opened from the title bar; shows the app version + the
 // catalog "as of" date + links to the source repos and the marketing
-// site. Closed via the [×] or click-outside.
+// site. Closed via the [Ã—] or click-outside.
 
 import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
 import type { main } from '../wailsjs/go/models'
@@ -34,7 +34,7 @@ export function AboutDialog({ version, onClose, onGoToMaintain }: Props) {
           </h2>
           {version && (
             <p className="mt-1 font-mono text-xs text-muted-foreground">
-              v{version.app} · catalog {version.catalogAsOf} · {version.modelCount} models
+              v{version.app} Â· catalog {version.catalogAsOf} Â· {version.modelCount} models
             </p>
           )}
         </header>
@@ -61,7 +61,7 @@ export function AboutDialog({ version, onClose, onGoToMaintain }: Props) {
               }}
               className="text-foreground underline decoration-border underline-offset-2 transition hover:decoration-foreground"
             >
-              Maintain → Reset Blueprint data
+              Maintain â†’ Reset Blueprint data
             </button>
             .
           </p>
@@ -74,7 +74,7 @@ export function AboutDialog({ version, onClose, onGoToMaintain }: Props) {
           <LinkButton href="https://github.com/inspireailab-admin/blueprint-app">
             App source
           </LinkButton>
-          <LinkButton href="https://github.com/inspireailab-admin/blueprint">
+          <LinkButton href="https://github.com/inspireailab-admin/blueprint-cli">
             CLI / kernel
           </LinkButton>
           <LinkButton href="https://inspireailab.com">Marketing site</LinkButton>

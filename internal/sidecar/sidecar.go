@@ -1,4 +1,4 @@
-// Package sidecar manages Blueprint's Python sidecar processes — the
+// Package sidecar manages Blueprint's Python sidecar processes â€” the
 // helper services that wrap libraries like LLMLingua and (later) the
 // LoRA training pipeline. Each sidecar is a tiny FastAPI server
 // supervised the same way we supervise llama-server.
@@ -34,14 +34,14 @@ import (
 	"time"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/pyruntime"
-	"github.com/inspireailab-admin/blueprint/pkg/paths"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 )
 
 //go:embed compress.py train.py
 var srcFS embed.FS
 
 // ExtractAll writes the embedded Python files to disk under
-// ~/.blueprint/python/sidecar/. Idempotent — overwrites existing
+// ~/.blueprint/python/sidecar/. Idempotent â€” overwrites existing
 // files so an upgraded Blueprint always ships its current sidecar
 // code.
 func ExtractAll() error {
@@ -81,7 +81,7 @@ func SidecarDir() (string, error) {
 	return filepath.Join(root, "python", "sidecar"), nil
 }
 
-// ─── Lifecycle ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Sidecar wraps one running Python child. Created by Spawn, closed by
 // Stop.
@@ -120,7 +120,7 @@ func Spawn(scriptName string, extraArgs []string) (*Sidecar, error) {
 		return nil, err
 	}
 	if _, err := os.Stat(pythonBin); err != nil {
-		return nil, fmt.Errorf("python not installed in venv (%s) — install Python core via the Dashboard's Python runtime card", pythonBin)
+		return nil, fmt.Errorf("python not installed in venv (%s) â€” install Python core via the Dashboard's Python runtime card", pythonBin)
 	}
 
 	port, err := pickPort()
@@ -215,7 +215,7 @@ func (s *Sidecar) BaseURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", s.Port)
 }
 
-// ─── Port allocation ──────────────────────────────────────────────────────
+// â”€â”€â”€ Port allocation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // pickPort walks 19150..19299 looking for one we can bind. The range
 // is intentionally above the eval harness's 17150..17300 and below
@@ -231,7 +231,7 @@ func pickPort() (int, error) {
 	return 0, fmt.Errorf("no free sidecar port in 19150..19299")
 }
 
-// Drain copies the entire body to /dev/null + closes — common helper.
+// Drain copies the entire body to /dev/null + closes â€” common helper.
 func Drain(r io.Reader, c io.Closer) {
 	_, _ = io.Copy(io.Discard, r)
 	if c != nil {
