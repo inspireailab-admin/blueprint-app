@@ -72,6 +72,44 @@ type Config struct {
 	// crashing child before giving up. 0 = unbounded.
 	MaxRestarts int `json:"maxRestarts"`
 
+	// ─── Advanced startup params ─────────────────────────────────────
+	// All zero / empty values mean "use llama.cpp's default" — the
+	// supervisor only adds the flag when the value is non-zero.
+
+	// Threads sets --threads (CPU threads). 0 = let llama.cpp pick.
+	Threads int `json:"threads,omitempty"`
+
+	// BatchSize sets --batch-size (logical max prompt batch). 0 = default.
+	BatchSize int `json:"batchSize,omitempty"`
+
+	// UBatchSize sets --ubatch-size (physical max batch). 0 = default.
+	UBatchSize int `json:"uBatchSize,omitempty"`
+
+	// FlashAttn enables --flash-attn. Faster prefill on supported GPUs.
+	FlashAttn bool `json:"flashAttn,omitempty"`
+
+	// MemoryLock pins weights in RAM with --mlock.
+	MemoryLock bool `json:"memoryLock,omitempty"`
+
+	// NoMmap disables mmap with --no-mmap (copies weights to RAM).
+	NoMmap bool `json:"noMmap,omitempty"`
+
+	// ParallelSlots sets --parallel (concurrent decode slots). 0 = 1.
+	ParallelSlots int `json:"parallelSlots,omitempty"`
+
+	// ContBatching enables --cont-batching (continuous batching across slots).
+	ContBatching bool `json:"contBatching,omitempty"`
+
+	// KvCacheTypeK sets --cache-type-k. One of "f16" | "q8_0" | "q4_0".
+	// Empty = f16.
+	KvCacheTypeK string `json:"kvCacheTypeK,omitempty"`
+
+	// KvCacheTypeV sets --cache-type-v. Same options as KvCacheTypeK.
+	KvCacheTypeV string `json:"kvCacheTypeV,omitempty"`
+
+	// LogVerbose enables --verbose.
+	LogVerbose bool `json:"logVerbose,omitempty"`
+
 	// UpdatedAt is the unix milliseconds the app last wrote this file —
 	// the service uses it to detect config changes.
 	UpdatedAt int64 `json:"updatedAt"`

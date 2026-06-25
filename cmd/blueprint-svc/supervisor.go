@@ -187,6 +187,41 @@ func llamaArgs(cfg *svcconfig.Config) []string {
 	if cfg.EnableMetrics {
 		args = append(args, "--metrics")
 	}
+	// Advanced startup flags — only emitted when set so we don't
+	// override llama.cpp's sensible defaults unnecessarily.
+	if cfg.Threads > 0 {
+		args = append(args, "--threads", strconv.Itoa(cfg.Threads))
+	}
+	if cfg.BatchSize > 0 {
+		args = append(args, "--batch-size", strconv.Itoa(cfg.BatchSize))
+	}
+	if cfg.UBatchSize > 0 {
+		args = append(args, "--ubatch-size", strconv.Itoa(cfg.UBatchSize))
+	}
+	if cfg.FlashAttn {
+		args = append(args, "--flash-attn")
+	}
+	if cfg.MemoryLock {
+		args = append(args, "--mlock")
+	}
+	if cfg.NoMmap {
+		args = append(args, "--no-mmap")
+	}
+	if cfg.ParallelSlots > 0 {
+		args = append(args, "--parallel", strconv.Itoa(cfg.ParallelSlots))
+	}
+	if cfg.ContBatching {
+		args = append(args, "--cont-batching")
+	}
+	if cfg.KvCacheTypeK != "" {
+		args = append(args, "--cache-type-k", cfg.KvCacheTypeK)
+	}
+	if cfg.KvCacheTypeV != "" {
+		args = append(args, "--cache-type-v", cfg.KvCacheTypeV)
+	}
+	if cfg.LogVerbose {
+		args = append(args, "--verbose")
+	}
 	return args
 }
 

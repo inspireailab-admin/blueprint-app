@@ -266,6 +266,20 @@ type ServeConfigInput struct {
 	Port       int    `json:"port"`
 	CtxSize    int    `json:"ctxSize"`
 	NGpuLayers int    `json:"nGpuLayers"`
+
+	// Advanced startup params — all optional. Zero / empty values mean
+	// "leave the llama.cpp default."
+	Threads       int    `json:"threads,omitempty"`
+	BatchSize     int    `json:"batchSize,omitempty"`
+	UBatchSize    int    `json:"uBatchSize,omitempty"`
+	FlashAttn     bool   `json:"flashAttn,omitempty"`
+	MemoryLock    bool   `json:"memoryLock,omitempty"`
+	NoMmap        bool   `json:"noMmap,omitempty"`
+	ParallelSlots int    `json:"parallelSlots,omitempty"`
+	ContBatching  bool   `json:"contBatching,omitempty"`
+	KvCacheTypeK  string `json:"kvCacheTypeK,omitempty"`
+	KvCacheTypeV  string `json:"kvCacheTypeV,omitempty"`
+	LogVerbose    bool   `json:"logVerbose,omitempty"`
 }
 
 // ApplyServeConfig validates the input, resolves the absolute paths
@@ -329,6 +343,14 @@ func (a *App) ApplyServeConfig(in ServeConfigInput) error {
 		}
 	}
 
+	// Validate KV cache types so the supervisor doesn't get a bad arg.
+	if !validKvCacheType(in.KvCacheTypeK) {
+		return fmt.Errorf("kvCacheTypeK must be empty, f16, q8_0, or q4_0; got %q", in.KvCacheTypeK)
+	}
+	if !validKvCacheType(in.KvCacheTypeV) {
+		return fmt.Errorf("kvCacheTypeV must be empty, f16, q8_0, or q4_0; got %q", in.KvCacheTypeV)
+	}
+
 	cfg := svcconfig.Config{
 		LlamaServerBin: bin,
 		ModelPath:      modelPath,
@@ -342,8 +364,28 @@ func (a *App) ApplyServeConfig(in ServeConfigInput) error {
 		EnableMetrics:  true,
 		MaxRestarts:    0, // unbounded — corporate uptime
 		UpdatedAt:      time.Now().UnixMilli(),
+		// Advanced startup params, passed through verbatim.
+		Threads:       in.Threads,
+		BatchSize:     in.BatchSize,
+		UBatchSize:    in.UBatchSize,
+		FlashAttn:     in.FlashAttn,
+		MemoryLock:    in.MemoryLock,
+		NoMmap:        in.NoMmap,
+		ParallelSlots: in.ParallelSlots,
+		ContBatching:  in.ContBatching,
+		KvCacheTypeK:  in.KvCacheTypeK,
+		KvCacheTypeV:  in.KvCacheTypeV,
+		LogVerbose:    in.LogVerbose,
 	}
 	return svcconfig.WriteConfig(cfg)
+}
+
+func validKvCacheType(s string) bool {
+	switch s {
+	case "", "f16", "q8_0", "q4_0":
+		return true
+	}
+	return false
 }
 
 // CurrentServeConfig surfaces the desired-state config so the
