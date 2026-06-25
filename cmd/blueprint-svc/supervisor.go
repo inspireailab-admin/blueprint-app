@@ -222,6 +222,17 @@ func llamaArgs(cfg *svcconfig.Config) []string {
 	if cfg.LogVerbose {
 		args = append(args, "--verbose")
 	}
+	// LoRA adapter — applied on top of the base model at load time.
+	// llama-server accepts the path via --lora and the blend via
+	// --lora-scaled <path> <scale>. We use --lora-scaled even at
+	// scale=1.0 because it's the most explicit form.
+	if cfg.LoraAdapter != "" {
+		scale := cfg.LoraScale
+		if scale <= 0 {
+			scale = 1.0
+		}
+		args = append(args, "--lora-scaled", cfg.LoraAdapter, strconv.FormatFloat(scale, 'f', -1, 64))
+	}
 	return args
 }
 

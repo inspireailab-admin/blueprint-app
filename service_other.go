@@ -31,12 +31,31 @@ type ServiceInfo struct {
 }
 
 type ServeConfigInput struct {
-	ModelID    string `json:"modelId"`
-	Quant      string `json:"quant"`
-	BindHost   string `json:"bindHost"`
-	Port       int    `json:"port"`
-	CtxSize    int    `json:"ctxSize"`
-	NGpuLayers int    `json:"nGpuLayers"`
+	ModelID       string  `json:"modelId"`
+	Quant         string  `json:"quant"`
+	BindHost      string  `json:"bindHost"`
+	Port          int     `json:"port"`
+	CtxSize       int     `json:"ctxSize"`
+	NGpuLayers    int     `json:"nGpuLayers"`
+	Threads       int     `json:"threads,omitempty"`
+	BatchSize     int     `json:"batchSize,omitempty"`
+	UBatchSize    int     `json:"uBatchSize,omitempty"`
+	FlashAttn     bool    `json:"flashAttn,omitempty"`
+	MemoryLock    bool    `json:"memoryLock,omitempty"`
+	NoMmap        bool    `json:"noMmap,omitempty"`
+	ParallelSlots int     `json:"parallelSlots,omitempty"`
+	ContBatching  bool    `json:"contBatching,omitempty"`
+	KvCacheTypeK  string  `json:"kvCacheTypeK,omitempty"`
+	KvCacheTypeV  string  `json:"kvCacheTypeV,omitempty"`
+	LogVerbose    bool    `json:"logVerbose,omitempty"`
+	LoraAdapter   string  `json:"loraAdapter,omitempty"`
+	LoraScale     float64 `json:"loraScale,omitempty"`
+}
+
+type LoraAdapterEntry struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"sizeBytes"`
 }
 
 var errNotWindows = errors.New("Blueprint Service is only available on Windows in this release")
@@ -52,3 +71,4 @@ func (a *App) StopManagedServer() error                { return errNotWindows }
 func (a *App) RestartManagedServer() error             { return errNotWindows }
 func (a *App) ApplyServeConfig(in ServeConfigInput) error { return errNotWindows }
 func (a *App) CurrentServeConfig() *svcconfig.Config   { return nil }
+func (a *App) ListLoraAdapters() ([]LoraAdapterEntry, error) { return nil, errNotWindows }

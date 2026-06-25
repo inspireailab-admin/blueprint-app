@@ -27,6 +27,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   ApplyServeConfig,
   CurrentServeConfig,
+  ListLoraAdapters,
   RestartManagedServer,
   ServiceInfo,
   StartManagedServer,
@@ -357,6 +358,40 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
               kvCacheTypeK: config.kvCacheTypeK,
               kvCacheTypeV: config.kvCacheTypeV,
               logVerbose: config.logVerbose,
+              loraAdapter: config.loraAdapter,
+              loraScale: config.loraScale,
+            } as main.ServeConfigInput)
+            await RestartManagedServer()
+          })
+        }}
+      />
+
+      <LoraDisclosure
+        config={config}
+        disabled={actionInFlight !== null}
+        onApply={async (loraAdapter, loraScale) => {
+          if (!config) return
+          await run('lora', async () => {
+            await ApplyServeConfig({
+              modelId: config.modelId,
+              quant: config.quant,
+              bindHost: config.bindHost,
+              port: config.port,
+              ctxSize: config.ctxSize,
+              nGpuLayers: config.nGpuLayers,
+              threads: config.threads,
+              batchSize: config.batchSize,
+              uBatchSize: config.uBatchSize,
+              flashAttn: config.flashAttn,
+              memoryLock: config.memoryLock,
+              noMmap: config.noMmap,
+              parallelSlots: config.parallelSlots,
+              contBatching: config.contBatching,
+              kvCacheTypeK: config.kvCacheTypeK,
+              kvCacheTypeV: config.kvCacheTypeV,
+              logVerbose: config.logVerbose,
+              loraAdapter,
+              loraScale,
             } as main.ServeConfigInput)
             await RestartManagedServer()
           })
@@ -923,6 +958,161 @@ function ServerSettingsDisclosure({
       )}
     </div>
   )
+}
+
+// ─── LoRA adapter disclosure ────────────────────────────────────────────
+//
+// Picks a LoRA adapter file from ~/.blueprint/lora/ and tunes the
+// blend scale (0..1). Restart applies. Tier 2 step 2 — the loading
+// half of the LoRA story. Training (step 1) is Python-side and ships
+// separately.
+
+function LoraDisclosure({
+  config,
+  disabled,
+  onApply,
+}: {
+  config: svcconfig.Config | null
+  disabled: boolean
+  onApply: (path: string, scale: number) => Promise<void>
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [adapters, setAdapters] = useState<main.LoraAdapterEntry[] | null>(null)
+  const [adapter, setAdapter] = useState<string>(config?.loraAdapter ?? '')
+  const [scale, setScale] = useState<number>(config?.loraScale && config.loraScale > 0 ? config.loraScale : 1.0)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!expanded) return
+    void ListLoraAdapters()
+      .then((list) => setAdapters(list ?? []))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [expanded])
+
+  useEffect(() => {
+    setAdapter(config?.loraAdapter ?? '')
+    setScale(config?.loraScale && config.loraScale > 0 ? config.loraScale : 1.0)
+  }, [config?.loraAdapter, config?.loraScale])
+
+  const dirty =
+    adapter !== (config?.loraAdapter ?? '') ||
+    Math.abs(scale - (config?.loraScale && config.loraScale > 0 ? config.loraScale : 1.0)) > 1e-6
+
+  return (
+    <div className="border-t border-border/60 px-6 py-3">
+      <button
+        type="button"
+        onClick={() => setExpanded((v: boolean) => !v)}
+        className="flex w-full items-center justify-between text-left text-xs font-medium text-muted-foreground transition hover:text-foreground"
+      >
+        <span className="flex items-center gap-2">
+          <span aria-hidden>{expanded ? '▾' : '▸'}</span>
+          LoRA adapter
+          {config?.loraAdapter && (
+            <span className="ml-2 rounded-full bg-chart-4/15 px-2 py-0.5 font-mono text-[10px] text-chart-4">
+              active
+            </span>
+          )}
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">
+          requires service restart
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Drop trained adapter files (<code className="font-mono">.gguf</code> or{' '}
+            <code className="font-mono">.bin</code>) into{' '}
+            <code className="font-mono">~/.blueprint/lora/</code> and they show up here.
+            Scale blends the adapter with the base — <b>1.0</b> = full adapter behavior,{' '}
+            <b>0.5</b> = halfway, <b>0</b> = base only.
+          </p>
+
+          {error && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
+              {error}
+            </p>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+            <label className="block">
+              <span className="text-xs font-medium">Adapter</span>
+              <select
+                value={adapter}
+                onChange={(e) => setAdapter(e.target.value)}
+                disabled={disabled || adapters === null}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12px] shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-60"
+              >
+                <option value="">— none (base model only) —</option>
+                {(adapters ?? []).map((a) => (
+                  <option key={a.path} value={a.path}>
+                    {a.name} ({humanBytesLora(a.sizeBytes)})
+                  </option>
+                ))}
+              </select>
+              {adapters !== null && adapters.length === 0 && (
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  No adapters found in <code className="font-mono">~/.blueprint/lora/</code>.
+                </p>
+              )}
+            </label>
+            <label className="block w-32">
+              <span className="text-xs font-medium">Scale</span>
+              <input
+                type="number"
+                min={0}
+                max={2}
+                step={0.05}
+                value={scale}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value)
+                  setScale(Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : 1.0)
+                }}
+                disabled={disabled || !adapter}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12px] shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-60"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              disabled={disabled || !dirty}
+              onClick={() => {
+                setAdapter(config?.loraAdapter ?? '')
+                setScale(config?.loraScale && config.loraScale > 0 ? config.loraScale : 1.0)
+              }}
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+            >
+              Revert
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !dirty}
+              onClick={() => onApply(adapter, scale)}
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
+            >
+              {disabled ? 'Applying…' : 'Apply + restart'} →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function humanBytesLora(n: number): string {
+  if (!n || n <= 0) return '0 B'
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(1)} ${units[i]}`
 }
 
 const KV_CACHE_OPTIONS = [
