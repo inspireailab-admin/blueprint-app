@@ -8,9 +8,13 @@ import type { main } from '../wailsjs/go/models'
 type Props = {
   version: main.VersionInfo | null
   onClose: () => void
+  /** Jump to the Maintain tab. Used by the "How to uninstall" row so
+   *  users who go looking in About find the Reset action without
+   *  having to read the README. */
+  onGoToMaintain: () => void
 }
 
-export function AboutDialog({ version, onClose }: Props) {
+export function AboutDialog({ version, onClose, onGoToMaintain }: Props) {
   return (
     <div
       role="dialog"
@@ -41,6 +45,29 @@ export function AboutDialog({ version, onClose }: Props) {
           </p>
           <p className="text-muted-foreground">
             Apache 2.0. Free, no telemetry, no account. The consulting practice funds it.
+          </p>
+        </div>
+
+        <div className="border-t border-border bg-muted/30 px-6 py-4 text-xs">
+          <p className="font-semibold tracking-tight text-foreground">Uninstalling</p>
+          <p className="mt-1 text-muted-foreground">
+            <b>Data</b> (pulled models + runtime, possibly many GB) lives at
+            {' '}<code className="font-mono">~/.blueprint/</code>. Clear it from{' '}
+            <button
+              type="button"
+              onClick={() => {
+                onClose()
+                onGoToMaintain()
+              }}
+              className="text-foreground underline decoration-border underline-offset-2 transition hover:decoration-foreground"
+            >
+              Maintain → Reset Blueprint data
+            </button>
+            .
+          </p>
+          <p className="mt-1.5 text-muted-foreground">
+            <b>The app binary itself</b> uninstalls the OS-native way: Apps &amp; Features
+            on Windows, drag to Trash on macOS, package manager on Linux.
           </p>
         </div>
         <div className="grid gap-2 border-t border-border px-6 py-4 sm:grid-cols-3">
