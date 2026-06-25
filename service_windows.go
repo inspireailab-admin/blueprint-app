@@ -24,15 +24,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/svc"
-	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
 	"github.com/inspireailab-admin/blueprint/pkg/catalog"
@@ -94,10 +90,18 @@ type ServiceInfo struct {
 }
 
 // ServiceInfo returns the combined SCM + supervisor view.
+//
+// CRITICAL: This runs in the desktop app, which is launched by the
+// interactive user — not an administrator. The golang.org/x/sys
+// /windows/svc/mgr package's Connect() opens the SCM with
+// SC_MANAGER_ALL_ACCESS, which a non-admin user can't get; the
+// call fails silently and the app falsely reports "not installed."
+// We bypass mgr.Connect entirely and call windows.OpenSCManager
+// directly with SC_MANAGER_CONNECT, which any authenticated user
+// can do — enough to query service state.
 func (a *App) ServiceInfo() ServiceInfo {
 	info := ServiceInfo{}
 
-	// Locate the expected blueprint-svc.exe.
 	if exePath, err := serviceBinPath(); err == nil {
 		info.SvcBinExpected = exePath
 		if _, err := os.Stat(exePath); err == nil {
@@ -105,24 +109,13 @@ func (a *App) ServiceInfo() ServiceInfo {
 		}
 	}
 
-	// SCM state.
-	m, err := mgr.Connect()
+	state, exePath, err := querySCMState()
 	if err == nil {
-		defer m.Disconnect()
-		if s, err := m.OpenService(svcconfig.ServiceName); err == nil {
-			info.Installed = true
-			cfg, _ := s.Config()
-			info.ExePath = cfg.BinaryPathName
-			if st, err := s.Query(); err == nil {
-				info.SCMState = scmStateString(st.State)
-			} else {
-				info.SCMState = "unknown"
-			}
-			s.Close()
-		}
+		info.Installed = true
+		info.SCMState = state
+		info.ExePath = exePath
 	}
 
-	// Supervisor view from the on-disk status file.
 	if st, err := svcconfig.ReadStatus(); err == nil && st != nil {
 		info.Phase = st.Phase
 		info.ModelID = st.ModelID
@@ -136,6 +129,73 @@ func (a *App) ServiceInfo() ServiceInfo {
 	}
 
 	return info
+}
+
+// querySCMState opens the service handle with the lowest possible
+// access flags so it works from a non-elevated process. Returns
+// (state, binaryPath, error) — error is set only when the service
+// is missing or the SCM is unreachable.
+func querySCMState() (string, string, error) {
+	scm, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return "", "", fmt.Errorf("open SCM: %w", err)
+	}
+	defer windows.CloseServiceHandle(scm)
+
+	namePtr, err := windows.UTF16PtrFromString(svcconfig.ServiceName)
+	if err != nil {
+		return "", "", err
+	}
+	svcHandle, err := windows.OpenService(scm, namePtr,
+		windows.SERVICE_QUERY_STATUS|windows.SERVICE_QUERY_CONFIG)
+	if err != nil {
+		return "", "", fmt.Errorf("open service: %w", err)
+	}
+	defer windows.CloseServiceHandle(svcHandle)
+
+	var status windows.SERVICE_STATUS_PROCESS
+	var needed uint32
+	if err := windows.QueryServiceStatusEx(svcHandle, windows.SC_STATUS_PROCESS_INFO,
+		(*byte)(unsafe.Pointer(&status)), uint32(unsafe.Sizeof(status)), &needed); err != nil {
+		return "unknown", "", nil
+	}
+
+	// QueryServiceConfig with a sensible buffer to retrieve the binary
+	// path. We don't actually need the path for correctness, just for
+	// the UI to render the install location.
+	binPath := ""
+	bufSize := uint32(8192)
+	buf := make([]byte, bufSize)
+	if err := windows.QueryServiceConfig(svcHandle,
+		(*windows.QUERY_SERVICE_CONFIG)(unsafe.Pointer(&buf[0])), bufSize, &needed); err == nil {
+		cfg := (*windows.QUERY_SERVICE_CONFIG)(unsafe.Pointer(&buf[0]))
+		if cfg.BinaryPathName != nil {
+			binPath = windows.UTF16PtrToString(cfg.BinaryPathName)
+		}
+	}
+
+	return scmStateFromCode(status.CurrentState), binPath, nil
+}
+
+func scmStateFromCode(state uint32) string {
+	switch state {
+	case windows.SERVICE_STOPPED:
+		return "stopped"
+	case windows.SERVICE_START_PENDING:
+		return "start_pending"
+	case windows.SERVICE_STOP_PENDING:
+		return "stop_pending"
+	case windows.SERVICE_RUNNING:
+		return "running"
+	case windows.SERVICE_CONTINUE_PENDING:
+		return "continue_pending"
+	case windows.SERVICE_PAUSE_PENDING:
+		return "pause_pending"
+	case windows.SERVICE_PAUSED:
+		return "paused"
+	default:
+		return "unknown"
+	}
 }
 
 // InstallService kicks off `blueprint-svc.exe install` via UAC. Returns
@@ -347,46 +407,45 @@ const (
 	scmStop
 )
 
+// scmControl talks to SCM with the lowest-privilege access flags
+// (SC_MANAGER_CONNECT + SERVICE_START/STOP|SERVICE_QUERY_STATUS) so
+// it works for the interactive user — provided the service DACL was
+// modified at install time to grant Authenticated Users start/stop
+// rights. The installer (cmd/blueprint-svc/install_windows.go) does
+// that via SetNamedSecurityInfo immediately after CreateService.
 func scmControl(cmd scmCmd) error {
-	m, err := mgr.Connect()
+	scm, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
-		return fmt.Errorf("connect SCM: %w", err)
+		return fmt.Errorf("open SCM: %w", err)
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(svcconfig.ServiceName)
+	defer windows.CloseServiceHandle(scm)
+
+	namePtr, err := windows.UTF16PtrFromString(svcconfig.ServiceName)
 	if err != nil {
-		return fmt.Errorf("service not installed: %w", err)
-	}
-	defer s.Close()
-	switch cmd {
-	case scmStart:
-		return s.Start()
-	case scmStop:
-		_, err := s.Control(svc.Stop)
 		return err
 	}
-	return nil
-}
 
-func scmStateString(state svc.State) string {
-	switch state {
-	case svc.Stopped:
-		return "stopped"
-	case svc.StartPending:
-		return "start_pending"
-	case svc.StopPending:
-		return "stop_pending"
-	case svc.Running:
-		return "running"
-	case svc.ContinuePending:
-		return "continue_pending"
-	case svc.PausePending:
-		return "pause_pending"
-	case svc.Paused:
-		return "paused"
-	default:
-		return "unknown"
+	var access uint32
+	switch cmd {
+	case scmStart:
+		access = windows.SERVICE_START | windows.SERVICE_QUERY_STATUS
+	case scmStop:
+		access = windows.SERVICE_STOP | windows.SERVICE_QUERY_STATUS
 	}
+	svcHandle, err := windows.OpenService(scm, namePtr, access)
+	if err != nil {
+		return fmt.Errorf("open service: %w (is it installed? does your user have control rights?)", err)
+	}
+	defer windows.CloseServiceHandle(svcHandle)
+
+	switch cmd {
+	case scmStart:
+		return windows.StartService(svcHandle, 0, nil)
+	case scmStop:
+		var status windows.SERVICE_STATUS
+		return windows.ControlService(svcHandle, windows.SERVICE_CONTROL_STOP, &status)
+	}
+	return nil
 }
 
 func randomToken(nBytes int) (string, error) {
@@ -397,9 +456,4 @@ func randomToken(nBytes int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// Silence unused imports if a future change drops some.
-var (
-	_ = exec.Command
-	_ = strings.Split
-	_ = unsafe.Pointer(nil)
-)
+var _ = unsafe.Pointer(nil) // satisfy linter; unsafe.Sizeof used above
