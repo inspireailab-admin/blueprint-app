@@ -191,7 +191,12 @@ func (a *App) ServerStatus() ServerStatus {
 // StartServe spawns llama-server against the given model. Returns
 // immediately; log lines stream over deploy:serve-log and state
 // changes over deploy:serve-status.
-func (a *App) StartServe(modelID, quant string) error {
+//
+// ctxSize controls the llama-server --ctx-size flag (max tokens).
+// Pass 0 for the safe default 4096. nGpuLayers controls --n-gpu-layers
+// (number of transformer layers offloaded to GPU). Pass -1 for 999
+// (offload everything; llama-server clamps to the actual count).
+func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
 	serveMu.Lock()
 	if serveProc != nil {
 		serveMu.Unlock()
@@ -220,15 +225,23 @@ func (a *App) StartServe(modelID, quant string) error {
 		return fmt.Errorf("%w\n\n%s", err, runtime.InstallInstructions())
 	}
 
+	if ctxSize <= 0 {
+		ctxSize = 4096
+	}
+	if nGpuLayers < 0 {
+		nGpuLayers = 999
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, bin,
 		"--model", modelPath,
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(servePort),
 		"--api-key", localAPIKey,
-		"--ctx-size", "4096",
-		"--n-gpu-layers", "999",
+		"--ctx-size", strconv.Itoa(ctxSize),
+		"--n-gpu-layers", strconv.Itoa(nGpuLayers),
 	)
+	hideConsole(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

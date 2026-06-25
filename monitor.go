@@ -146,6 +146,7 @@ func readNvidiaSmi() ([]Gpu, error) {
 	cmd := exec.Command("nvidia-smi",
 		"--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu",
 		"--format=csv,noheader,nounits")
+	hideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

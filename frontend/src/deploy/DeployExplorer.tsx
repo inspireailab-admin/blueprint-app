@@ -23,13 +23,14 @@ import {
   StopServe,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import type { Model, Requirements } from '../planner/types'
-import { smallestQuant } from '../planner/vram'
+import type { Model } from '../planner/types'
+import type { ServeConfig } from '../optimize/OptimizeExplorer'
+import { VerifyChat } from './VerifyChat'
 
 type Props = {
   selectedModel: Model | null
-  requirements: Requirements
-  onBackToHardware: () => void
+  serveConfig: ServeConfig
+  onBackToOptimize: () => void
 }
 
 type RuntimeStatus = { installed: boolean; version: string; binPath: string }
@@ -53,11 +54,8 @@ type DownloadProgress = {
   bps: number
 }
 
-export function DeployExplorer({ selectedModel, requirements, onBackToHardware }: Props) {
-  const quant = useMemo(
-    () => (selectedModel ? requirements.weightQuant ?? smallestQuant(selectedModel) : 'q4'),
-    [selectedModel, requirements.weightQuant],
-  )
+export function DeployExplorer({ selectedModel, serveConfig, onBackToOptimize }: Props) {
+  const quant = useMemo(() => serveConfig.quant, [serveConfig.quant])
 
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null)
   const [model, setModel] = useState<ModelStatus | null>(null)
@@ -152,14 +150,14 @@ export function DeployExplorer({ selectedModel, requirements, onBackToHardware }
       <div className="mt-10 mx-auto max-w-md rounded-2xl border border-dashed border-border bg-muted/30 p-8 text-center">
         <p className="eyebrow">Pick a model first</p>
         <p className="mt-3 text-sm text-muted-foreground">
-          Deploy needs a sized model — go through Plan and Hardware first.
+          Deploy needs a sized model — go through Plan, Hardware, and Optimize first.
         </p>
         <button
           type="button"
-          onClick={onBackToHardware}
+          onClick={onBackToOptimize}
           className="mt-6 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
         >
-          ← Back to Hardware
+          ← Back to Optimize
         </button>
       </div>
     )
@@ -196,9 +194,13 @@ export function DeployExplorer({ selectedModel, requirements, onBackToHardware }
         status={server}
         runtimeReady={!!runtime?.installed}
         modelReady={!!model?.present}
-        onStart={() => StartServe(selectedModel.id, quant)}
+        onStart={() =>
+          StartServe(selectedModel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
+        }
         onStop={() => StopServe()}
       />
+
+      {server.state === 'running' && <VerifyChat model={selectedModel} />}
 
       <LogPane lines={logLines} containerRef={logRef} />
     </div>

@@ -6,18 +6,21 @@ import { usePlannerState } from './planner/state'
 import type { Model } from './planner/types'
 import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
+import { OptimizeExplorer, type ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { MonitorExplorer } from './monitor/MonitorExplorer'
 import { MaintainExplorer } from './maintain/MaintainExplorer'
 import { WelcomeOverlay } from './WelcomeOverlay'
 import { AboutDialog } from './AboutDialog'
+import { smallestQuant } from './planner/vram'
 
-type TabId = 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain'
+type TabId = 'plan' | 'hardware' | 'optimize' | 'deploy' | 'monitor' | 'maintain'
 
 const TABS: { id: TabId; label: string; description: string }[] = [
   { id: 'plan', label: 'Plan', description: 'Pick a model that fits your workload.' },
   { id: 'hardware', label: 'Hardware', description: 'Size the hardware. Three configurations, no pricing.' },
-  { id: 'deploy', label: 'Deploy', description: 'Install runtime, pull the model, start serving.' },
+  { id: 'optimize', label: 'Optimize', description: 'Pick the quantization, context window, and GPU offload.' },
+  { id: 'deploy', label: 'Deploy', description: 'Install runtime, pull the model, start serving, verify.' },
   { id: 'monitor', label: 'Monitor', description: 'Live GPU, VRAM, CPU, throughput.' },
   { id: 'maintain', label: 'Maintain', description: 'Updates, swap models, restart, logs.' },
 ]
@@ -33,6 +36,16 @@ export function App() {
   const [models, setModels] = useState<Model[] | null>(null)
   const [catalogAsOf, setCatalogAsOf] = useState<string>('')
   const [catalogError, setCatalogError] = useState<string | null>(null)
+
+  // Serve config lives at the App level for the same reason — Optimize
+  // sets it, Deploy reads it. Default values mirror llama-server's
+  // safe defaults; the Optimize tab refines per-model once the user
+  // has picked something.
+  const [serveConfig, setServeConfig] = useState<ServeConfig>({
+    quant: 'q4',
+    ctxSize: 4096,
+    nGpuLayers: 999,
+  })
 
   useEffect(() => {
     Version()
@@ -53,6 +66,15 @@ export function App() {
 
   const activeTab = TABS.find((t) => t.id === active)!
   const selectedModel = findModel(models ?? [], planner.selectedModelId)
+
+  // When the user picks a new model, snap quant to its smallest
+  // available quant if the current serveConfig.quant isn't supported.
+  useEffect(() => {
+    if (!selectedModel) return
+    if (!selectedModel.quantOptions.includes(serveConfig.quant)) {
+      setServeConfig((prev) => ({ ...prev, quant: smallestQuant(selectedModel) }))
+    }
+  }, [selectedModel, serveConfig.quant])
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -82,13 +104,21 @@ export function App() {
               catalogAsOf={catalogAsOf}
               onUpdate={planner.update}
               onBackToPlan={() => setActive('plan')}
+              onContinueToDeploy={() => setActive('optimize')}
+            />
+          ) : active === 'optimize' ? (
+            <OptimizeExplorer
+              selectedModel={selectedModel}
+              config={serveConfig}
+              onChange={setServeConfig}
+              onBackToHardware={() => setActive('hardware')}
               onContinueToDeploy={() => setActive('deploy')}
             />
           ) : active === 'deploy' ? (
             <DeployExplorer
               selectedModel={selectedModel}
-              requirements={planner.requirements}
-              onBackToHardware={() => setActive('hardware')}
+              serveConfig={serveConfig}
+              onBackToOptimize={() => setActive('optimize')}
             />
           ) : active === 'monitor' ? (
             <MonitorExplorer />
@@ -204,6 +234,8 @@ function phaseFor(id: TabId): number {
       return 2
     case 'hardware':
       return 3
+    case 'optimize':
+      return 3.5
     case 'deploy':
       return 4
     case 'monitor':
