@@ -18,6 +18,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -240,6 +242,10 @@ func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
 		"--api-key", localAPIKey,
 		"--ctx-size", strconv.Itoa(ctxSize),
 		"--n-gpu-layers", strconv.Itoa(nGpuLayers),
+		// Expose Prometheus-format metrics at /metrics so the Dashboard's
+		// Performance card can show real throughput, active requests,
+		// and lifetime token counts.
+		"--metrics",
 	)
 	hideConsole(cmd)
 
@@ -365,3 +371,109 @@ func waitForReady(ctx context.Context, port int, timeout time.Duration) bool {
 // _ = filepath used in stat path printing (keeps the import if other
 // helpers grow later); silences staticcheck if Phase 4.x grows.
 var _ = filepath.Base
+
+// ─── llama-server metrics ──────────────────────────────────────────────────
+
+// LlamaMetrics is the parsed snapshot of llama-server's Prometheus
+// metrics endpoint. All counters/gauges that aren't in the response
+// stay at zero — `Available` is the only field that signals
+// "actually got data."
+//
+// The names track llama-server's exposed metric labels. Different
+// llama.cpp builds use slightly different metric names — we parse
+// defensively and fall back to zero on anything we don't recognize.
+type LlamaMetrics struct {
+	Available             bool    `json:"available"`
+	PromptTokensTotal     float64 `json:"promptTokensTotal"`
+	TokensPredictedTotal  float64 `json:"tokensPredictedTotal"`
+	TokensPerSecond       float64 `json:"tokensPerSecond"`
+	PromptTokensPerSecond float64 `json:"promptTokensPerSecond"`
+	RequestsProcessing    float64 `json:"requestsProcessing"`
+	RequestsDeferred      float64 `json:"requestsDeferred"`
+	KvCacheUsageRatio     float64 `json:"kvCacheUsageRatio"`
+	KvCacheTokens         float64 `json:"kvCacheTokens"`
+}
+
+// LlamaMetrics scrapes the /metrics endpoint of the supervised
+// llama-server. Returns `Available: false` when no server is running
+// or the endpoint is unreachable — the UI shows dashes in that case
+// rather than stale numbers.
+func (a *App) LlamaMetrics() LlamaMetrics {
+	serveMu.Lock()
+	state := serveState
+	port := servePort
+	serveMu.Unlock()
+	if state != "running" {
+		return LlamaMetrics{}
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return LlamaMetrics{}
+	}
+	req.Header.Set("Authorization", "Bearer "+localAPIKey)
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return LlamaMetrics{}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return LlamaMetrics{}
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return LlamaMetrics{}
+	}
+	m := parseLlamaMetrics(body)
+	m.Available = true
+	return m
+}
+
+// parseLlamaMetrics walks a Prometheus text-format body and pulls out
+// the handful of metric values the Dashboard cares about. Lines look
+// like `name 12.34` or `name{label="x"} 12.34`; we strip the label
+// block and switch on the bare name.
+func parseLlamaMetrics(body []byte) LlamaMetrics {
+	var m LlamaMetrics
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.LastIndex(line, " ")
+		if idx < 0 {
+			continue
+		}
+		keyPart := line[:idx]
+		valPart := strings.TrimSpace(line[idx+1:])
+		val, err := strconv.ParseFloat(valPart, 64)
+		if err != nil {
+			continue
+		}
+		if b := strings.Index(keyPart, "{"); b >= 0 {
+			keyPart = keyPart[:b]
+		}
+		switch keyPart {
+		case "llamacpp:prompt_tokens_total":
+			m.PromptTokensTotal = val
+		case "llamacpp:tokens_predicted_total":
+			m.TokensPredictedTotal = val
+		case "llamacpp:tokens_predicted_seconds", "llamacpp:predicted_tokens_seconds":
+			m.TokensPerSecond = val
+		case "llamacpp:prompt_tokens_seconds":
+			m.PromptTokensPerSecond = val
+		case "llamacpp:requests_processing":
+			m.RequestsProcessing = val
+		case "llamacpp:requests_deferred":
+			m.RequestsDeferred = val
+		case "llamacpp:kv_cache_usage_ratio":
+			m.KvCacheUsageRatio = val
+		case "llamacpp:kv_cache_tokens":
+			m.KvCacheTokens = val
+		}
+	}
+	return m
+}
