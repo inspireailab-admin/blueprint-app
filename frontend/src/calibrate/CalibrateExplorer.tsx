@@ -24,6 +24,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { calibration as cal, main } from '../../wailsjs/go/models'
+import { EvaluateStep } from './EvaluateStep'
 
 // Targets we offer for calibrated quantization. Ordered by VRAM
 // footprint, smallest first. The user multi-selects.
@@ -357,7 +358,7 @@ function RunDetail({
       <PromptsStep run={run} onSaved={onPromptsSaved} />
       <ImatrixStep run={run} installed={installed} />
       <QuantizeStep run={run} />
-      <EvaluatePlaceholder run={run} />
+      <EvaluateStep run={run} onChanged={onPromptsSaved} />
     </section>
   )
 }
@@ -602,27 +603,6 @@ function QuantizeStep({ run }: { run: cal.Run }) {
           {running ? 'Quantizing…' : done ? 'Re-run' : `Quantize ${selected.length} target${selected.length === 1 ? '' : 's'}`}
         </button>
       </div>
-    </article>
-  )
-}
-
-// ─── Step 4: evaluate (placeholder) ────────────────────────────────────
-
-function EvaluatePlaceholder({ run }: { run: cal.Run }) {
-  const ready = run.phase === 'quantize-ok' || run.phase === 'eval' || run.phase === 'eval-ok'
-  return (
-    <article className="rounded-2xl border border-dashed border-border bg-muted/20 p-5">
-      <StepHeader n={4} title="Evaluate + report" done={false} disabled={!ready} />
-      <p className="mt-1 max-w-prose text-xs text-muted-foreground">
-        Upload an eval set (JSONL with <code className="font-mono">prompt</code> and{' '}
-        <code className="font-mono">expected</code> per line), Blueprint runs each candidate GGUF
-        through the eval prompts, scores them, and renders a Pareto curve of quality vs.
-        throughput vs. VRAM. The headline finding gets stamped into a client-ready report.
-      </p>
-      <p className="mt-2 font-mono text-[10px] text-muted-foreground">
-        Eval harness, Pareto viz, and report export ship in the next turn — backend pipeline
-        already in flight.
-      </p>
     </article>
   )
 }
