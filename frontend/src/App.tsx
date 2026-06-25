@@ -79,7 +79,7 @@ export function App() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <WelcomeOverlay />
-      <TitleBar version={version} />
+      <TitleBar version={version} onGoToMaintain={() => setActive('maintain')} />
       <TabBar tabs={TABS} active={active} onSelect={setActive} />
 
       <main className="flex-1 overflow-y-auto">
@@ -148,7 +148,13 @@ function CatalogError({ message }: { message: string }) {
   )
 }
 
-function TitleBar({ version }: { version: main.VersionInfo | null }) {
+function TitleBar({
+  version,
+  onGoToMaintain,
+}: {
+  version: main.VersionInfo | null
+  onGoToMaintain: () => void
+}) {
   const [aboutOpen, setAboutOpen] = useState(false)
   return (
     <>
@@ -167,7 +173,13 @@ function TitleBar({ version }: { version: main.VersionInfo | null }) {
           About
         </button>
       </div>
-      {aboutOpen && <AboutDialog version={version} onClose={() => setAboutOpen(false)} />}
+      {aboutOpen && (
+        <AboutDialog
+          version={version}
+          onClose={() => setAboutOpen(false)}
+          onGoToMaintain={onGoToMaintain}
+        />
+      )}
     </>
   )
 }
