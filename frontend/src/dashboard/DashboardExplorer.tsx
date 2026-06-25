@@ -22,6 +22,7 @@ import {
   BlueprintDataSummary,
   InstalledModels,
   LatestRuntimeVersion,
+  LlamaMetrics,
   RuntimeStatus,
   ServerStatus,
   Snapshot,
@@ -60,6 +61,15 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
   const [server, setServer] = useState<main.ServerStatus | null>(null)
   const [snap, setSnap] = useState<main.Snapshot | null>(null)
   const [dataSummary, setDataSummary] = useState<main.BlueprintDataSummary | null>(null)
+  const [metrics, setMetrics] = useState<main.LlamaMetrics | null>(null)
+
+  // Local "action in flight" flags. Set synchronously on click so the
+  // button paints the spinner state immediately — without these the
+  // UI would freeze for 4-5 s while StartServe is in flight, since
+  // React can't repaint between the click and the await resolving.
+  const [startInFlight, setStartInFlight] = useState(false)
+  const [stopInFlight, setStopInFlight] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const [cpuHistory, setCpuHistory] = useState<number[]>([])
   const [ramHistory, setRamHistory] = useState<number[]>([])
@@ -109,6 +119,44 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
     }
   }, [server?.state, server?.pid])
 
+  // Clear the in-flight flags as soon as the backend confirms the
+  // requested state transition. Belt-and-braces — they also clear in
+  // the catch handlers — but this is the success path.
+  useEffect(() => {
+    if (server?.state === 'running') {
+      setStartInFlight(false)
+    } else if (server?.state === 'stopped') {
+      setStartInFlight(false)
+      setStopInFlight(false)
+    }
+  }, [server?.state])
+
+  // Poll llama-server's /metrics while it's running. 3 s cadence is
+  // a sensible default — the counters tick over fast under load and
+  // we don't want to be janky, but we also don't want a thundering
+  // herd of HTTP calls when the server is idle.
+  useEffect(() => {
+    if (server?.state !== 'running') {
+      setMetrics(null)
+      return
+    }
+    let alive = true
+    const tick = async () => {
+      try {
+        const m = await LlamaMetrics()
+        if (alive) setMetrics(m)
+      } catch {
+        if (alive) setMetrics(null)
+      }
+    }
+    void tick()
+    const id = setInterval(tick, 3000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [server?.state])
+
   async function refreshAll() {
     const [im, rt, srv, sn, ds] = await Promise.all([
       InstalledModels(),
@@ -135,7 +183,7 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
   const quickStartModel =
     installed?.find((m) => m.quant === serveConfig.quant) ?? installed?.[0] ?? null
 
-  async function quickStart() {
+  function quickStart() {
     if (!quickStartModel) {
       onGoTo('plan')
       return
@@ -146,13 +194,30 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       return
     }
     onSelectModel(quickStartModel.id)
-    await StartServe(
+    // Flip the local flag BEFORE awaiting anything so the button paints
+    // its loading state immediately. Don't await StartServe — the
+    // deploy:serve-status subscription will drive us to 'starting' →
+    // 'running'. A .catch handler clears the flag on failure.
+    setStartInFlight(true)
+    setActionError(null)
+    StartServe(
       quickStartModel.id,
       quickStartModel.quant,
       serveConfig.ctxSize,
       serveConfig.nGpuLayers,
-    )
-    setServer(await ServerStatus())
+    ).catch((err: unknown) => {
+      setActionError(err instanceof Error ? err.message : String(err))
+      setStartInFlight(false)
+    })
+  }
+
+  function stopServe() {
+    setStopInFlight(true)
+    setActionError(null)
+    StopServe().catch((err: unknown) => {
+      setActionError(err instanceof Error ? err.message : String(err))
+      setStopInFlight(false)
+    })
   }
 
   const uptime = uptimeStartedAt ? Date.now() - uptimeStartedAt : 0
@@ -165,12 +230,12 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
         hasModel={hasModel}
         quickStartModel={quickStartModel}
         uptimeMs={uptime}
+        startInFlight={startInFlight}
+        stopInFlight={stopInFlight}
+        actionError={actionError}
         onQuickStart={quickStart}
         onOpenVerify={() => onGoTo('deploy')}
-        onStop={async () => {
-          await StopServe()
-          setServer(await ServerStatus())
-        }}
+        onStop={stopServe}
       />
 
       <SystemTiles
@@ -188,7 +253,7 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
         <ServerConfigCard server={server} serveConfig={serveConfig} onChangeConfig={() => onGoTo('optimize')} />
       )}
 
-      {running && <PerformancePlaceholder />}
+      {running && <PerformanceCard metrics={metrics} />}
 
       <ModelsOnDiskCard
         installed={installed}
@@ -229,6 +294,9 @@ function ServerHero({
   hasModel,
   quickStartModel,
   uptimeMs,
+  startInFlight,
+  stopInFlight,
+  actionError,
   onQuickStart,
   onOpenVerify,
   onStop,
@@ -238,32 +306,49 @@ function ServerHero({
   hasModel: boolean
   quickStartModel: main.InstalledModel | null
   uptimeMs: number
+  startInFlight: boolean
+  stopInFlight: boolean
+  actionError: string | null
   onQuickStart: () => void
   onOpenVerify: () => void
   onStop: () => void
 }) {
+  // Combine local in-flight flag with backend 'starting' state — either
+  // means "we're in the middle of bringing the server up."
+  const starting = startInFlight || server?.state === 'starting'
   const running = server?.state === 'running'
   const runtimeReady = !!runtime?.installed
 
-  // Smart CTA — the obvious next action given what the user has.
+  // CTA when stopped — the obvious next action given what the user has.
   const cta = (() => {
-    if (running) return null
-    if (!hasModel) return { label: 'Pick a model', tone: 'primary' as const }
-    if (!runtimeReady) return { label: 'Install runtime', tone: 'primary' as const }
-    return { label: `Start server — ${quickStartModel?.displayName ?? 'model'}`, tone: 'primary' as const }
+    if (running || starting) return null
+    if (!hasModel) return { label: 'Pick a model' }
+    if (!runtimeReady) return { label: 'Install runtime' }
+    return { label: `Start server — ${quickStartModel?.displayName ?? 'model'}` }
   })()
 
   return (
     <section
       className={[
         'overflow-hidden rounded-2xl border shadow-sm',
-        running ? 'border-chart-4/40 bg-chart-4/5' : 'border-border bg-card',
+        running ? 'border-chart-4/40 bg-chart-4/5' : starting ? 'border-chart-5/40 bg-chart-5/5' : 'border-border bg-card',
       ].join(' ')}
     >
       <div className="flex flex-wrap items-start justify-between gap-4 px-6 py-5">
         <div className="min-w-0">
           <p className="eyebrow">Server</p>
-          {running ? (
+          {starting ? (
+            <>
+              <p className="mt-1 flex items-center gap-2 text-xl font-semibold tracking-tight">
+                <Spinner /> Starting llama-server…
+              </p>
+              <p className="mt-1 max-w-prose text-xs text-muted-foreground">
+                Loading <b>{quickStartModel?.displayName ?? server?.modelId ?? 'model'}</b>{' '}
+                <span className="font-mono">{(quickStartModel?.quant ?? server?.quant ?? '').toUpperCase()}</span>
+                {' '}— mmaping weights and warming the KV cache. First boot of a big model can take a few seconds.
+              </p>
+            </>
+          ) : running ? (
             <>
               <p className="mt-1 flex items-center gap-2 text-xl font-semibold tracking-tight">
                 <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-chart-4" />
@@ -291,12 +376,25 @@ function ServerHero({
                     ? 'llama.cpp runtime isn’t installed yet. The Deploy tab handles the one-time install.'
                     : `Ready to serve ${quickStartModel?.displayName ?? 'a model'} — click below to start the local OpenAI-compatible API.`}
               </p>
+              {actionError && (
+                <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-1.5 font-mono text-[11px] text-destructive">
+                  {actionError}
+                </p>
+              )}
             </>
           )}
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {running ? (
+          {starting ? (
+            <button
+              type="button"
+              disabled
+              className="inline-flex items-center gap-2 rounded-md bg-primary/70 px-5 py-2 text-sm font-semibold text-primary-foreground shadow-sm"
+            >
+              <Spinner /> Starting…
+            </button>
+          ) : running ? (
             <>
               <button
                 type="button"
@@ -308,9 +406,11 @@ function ServerHero({
               <button
                 type="button"
                 onClick={onStop}
-                className="rounded-md border border-destructive/40 bg-background px-4 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/5"
+                disabled={stopInFlight}
+                className="inline-flex items-center gap-2 rounded-md border border-destructive/40 bg-background px-4 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/5 disabled:opacity-60"
               >
-                Stop server
+                {stopInFlight && <Spinner />}
+                {stopInFlight ? 'Stopping…' : 'Stop server'}
               </button>
             </>
           ) : (
@@ -327,6 +427,15 @@ function ServerHero({
         </div>
       </div>
     </section>
+  )
+}
+
+function Spinner() {
+  return (
+    <span
+      aria-hidden
+      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+    />
   )
 }
 
@@ -490,37 +599,86 @@ function ServerConfigCard({
 
 // ─── Performance placeholder ────────────────────────────────────────────
 
-function PerformancePlaceholder() {
+function PerformanceCard({ metrics }: { metrics: main.LlamaMetrics | null }) {
+  const live = metrics?.available
+  const tiles = [
+    {
+      label: 'Throughput',
+      value: live ? metrics!.tokensPerSecond.toFixed(1) : '—',
+      unit: 'tokens / sec, generation',
+    },
+    {
+      label: 'Prompt speed',
+      value: live ? metrics!.promptTokensPerSecond.toFixed(0) : '—',
+      unit: 'tokens / sec, prefill',
+    },
+    {
+      label: 'Active requests',
+      value: live ? metrics!.requestsProcessing.toFixed(0) : '—',
+      unit: live && metrics!.requestsDeferred > 0
+        ? `${metrics!.requestsDeferred.toFixed(0)} queued`
+        : 'concurrent',
+    },
+    {
+      label: 'Tokens generated',
+      value: live ? formatCompactNumber(metrics!.tokensPredictedTotal) : '—',
+      unit: 'since server start',
+    },
+  ]
+
   return (
-    <section className="overflow-hidden rounded-2xl border border-dashed border-border bg-muted/20 shadow-sm">
-      <header className="border-b border-border px-6 py-4">
-        <h2 className="text-base font-semibold tracking-tight">Performance</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Throughput, latency, and error counts — coming as we wire up llama-server&apos;s metrics
-          endpoint. The numbers below are what we&apos;ll show.
-        </p>
+    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight">Performance</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Scraped from llama-server&apos;s <code className="font-mono">/metrics</code> endpoint every 3 s.
+            Counters tick once you send requests.
+          </p>
+        </div>
+        {!live && (
+          <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            Awaiting first request
+          </span>
+        )}
       </header>
-      <ul className="grid gap-px bg-border sm:grid-cols-4">
-        {PERF_TILES.map((t) => (
+      <ul className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
+        {tiles.map((t) => (
           <li key={t.label} className="bg-card px-5 py-4">
             <p className="eyebrow">{t.label}</p>
-            <p className="mt-1 font-mono text-2xl font-semibold tracking-tight text-muted-foreground/60">
-              —
+            <p
+              className={[
+                'mt-1 font-mono text-2xl font-semibold tracking-tight',
+                live ? 'text-foreground' : 'text-muted-foreground/60',
+              ].join(' ')}
+            >
+              {t.value}
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">{t.unit}</p>
           </li>
         ))}
       </ul>
+      {live && metrics!.kvCacheTokens > 0 && (
+        <div className="border-t border-border px-6 py-3 text-xs text-muted-foreground">
+          <span className="font-mono">KV cache</span>
+          {' '}
+          {(metrics!.kvCacheUsageRatio * 100).toFixed(0)}%
+          <span className="mx-2 opacity-40">·</span>
+          {metrics!.kvCacheTokens.toLocaleString()} tokens in cache
+          <span className="mx-2 opacity-40">·</span>
+          {formatCompactNumber(metrics!.promptTokensTotal)} prompt tokens processed lifetime
+        </div>
+      )}
     </section>
   )
 }
 
-const PERF_TILES = [
-  { label: 'Throughput', unit: 'tokens / sec' },
-  { label: 'TTFT (P50)', unit: 'ms' },
-  { label: 'Active requests', unit: 'concurrent' },
-  { label: 'Tokens served', unit: 'since start' },
-]
+function formatCompactNumber(n: number): string {
+  if (n < 1000) return n.toFixed(0)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  return `${(n / 1_000_000_000).toFixed(1)}B`
+}
 
 // ─── Models on disk ─────────────────────────────────────────────────────
 
