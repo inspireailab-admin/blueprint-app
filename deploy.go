@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
 	"github.com/inspireailab-admin/blueprint/pkg/catalog"
 	"github.com/inspireailab-admin/blueprint/pkg/download"
 	"github.com/inspireailab-admin/blueprint/pkg/paths"
@@ -394,24 +395,34 @@ type LlamaMetrics struct {
 	KvCacheTokens         float64 `json:"kvCacheTokens"`
 }
 
-// LlamaMetrics scrapes the /metrics endpoint of the supervised
-// llama-server. Returns `Available: false` when no server is running
-// or the endpoint is unreachable — the UI shows dashes in that case
-// rather than stale numbers.
+// LlamaMetrics scrapes the /metrics endpoint of whatever llama-server
+// is currently running on this machine.
+//
+// Two sources of "where to look": the service config (the new path —
+// the supervisor runs llama-server with the configured port + key) and
+// the legacy in-app constants (the old direct-spawn path on 8080 with
+// "blueprint-local"). We prefer the service config when present.
+//
+// Returns `Available: false` when the scrape fails — the UI shows
+// dashes in that case rather than stale numbers.
 func (a *App) LlamaMetrics() LlamaMetrics {
-	serveMu.Lock()
-	state := serveState
 	port := servePort
-	serveMu.Unlock()
-	if state != "running" {
-		return LlamaMetrics{}
+	apiKey := localAPIKey
+	if cfg, _ := svcconfig.ReadConfig(); cfg != nil {
+		if cfg.Port > 0 {
+			port = cfg.Port
+		}
+		if cfg.APIKey != "" {
+			apiKey = cfg.APIKey
+		}
 	}
+
 	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return LlamaMetrics{}
 	}
-	req.Header.Set("Authorization", "Bearer "+localAPIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

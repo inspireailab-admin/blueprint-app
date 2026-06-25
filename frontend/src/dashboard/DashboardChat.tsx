@@ -70,10 +70,17 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** Tracks the in-flight fetch so the user can stop a streaming response.
+   *  Set on send(), aborted by stop(), cleared in the finally block. */
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages])
+
+  function stop() {
+    abortRef.current?.abort()
+  }
 
   const send = useCallback(async () => {
     const text = input.trim()
@@ -131,6 +138,9 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
       if (params.seed !== -1) body.seed = params.seed
       if (stops.length > 0) body.stop = stops
 
+      const ctrl = new AbortController()
+      abortRef.current = ctrl
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -138,6 +148,7 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        signal: ctrl.signal,
       })
 
       if (res.status === 401) {
@@ -183,11 +194,20 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
-      setMessages((m) => m.slice(0, -1))
+      // User clicked Stop — keep whatever was streamed so far, no error.
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // intentional, swallow
+      } else if (err instanceof Error && err.message.includes('aborted')) {
+        // older runtimes surface AbortError as a generic TypeError; check
+        // the message as a fallback
+      } else {
+        const msg = err instanceof Error ? err.message : String(err)
+        setError(msg)
+        setMessages((m) => m.slice(0, -1))
+      }
     } finally {
       setSending(false)
+      abortRef.current = null
     }
   }, [initialApiKey, endpoint, input, messages, params, sending])
 
@@ -267,7 +287,7 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          send()
+          if (!sending) send()
         }}
         className="flex items-center gap-2 border-t border-border bg-muted/30 px-6 py-3"
       >
@@ -275,18 +295,37 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Message your local model…"
+          placeholder={sending ? 'Streaming response…' : 'Message your local model…'}
           disabled={sending}
           className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
         />
-        <button
-          type="submit"
-          disabled={sending || !input.trim()}
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
-        >
-          {sending ? 'Sending…' : 'Send'}
-          {!sending && <span aria-hidden>→</span>}
-        </button>
+        {sending ? (
+          /* Stop — same position + size as Send, dark fg, square icon */
+          <button
+            type="button"
+            onClick={stop}
+            title="Stop response"
+            aria-label="Stop response"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-foreground text-background shadow-sm transition hover:bg-foreground/85"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden>
+              <rect x="6" y="6" width="12" height="12" rx="1.5" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!input.trim()}
+            title="Send"
+            aria-label="Send"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <line x1="12" y1="19" x2="12" y2="5" />
+              <polyline points="5 12 12 5 19 12" />
+            </svg>
+          </button>
+        )}
       </form>
     </section>
   )
