@@ -69,6 +69,19 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
+      # Build the supervisor binary BEFORE wails build so the NSIS
+      # template's File include for blueprint-svc.exe finds it. We
+      # also build it on macOS/Linux even though we don't ship a
+      # Windows service on those platforms — Linux has its own systemd
+      # variant we want to attach to the release.
+      - name: Build blueprint-svc
+        if: matrix.os == 'windows-latest'
+        run: go build -o build/bin/blueprint-svc.exe ./cmd/blueprint-svc
+
+      - name: Build blueprint-svc-linux
+        if: matrix.os == 'ubuntu-latest'
+        run: go build -o build/bin/blueprint-svc-linux ./cmd/blueprint-svc
+
       - name: Wails build
         run: |
           wails build \
@@ -132,6 +145,17 @@ jobs:
           path: build/bin/${{ matrix.artifact_name }}
           retention-days: 7
 
+      # Linux ships its systemd-managed supervisor as a separate
+      # artifact alongside the desktop binary. The install.sh script
+      # already in installer/ pulls this and sudo-installs it.
+      - name: Upload Linux service binary
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: blueprint-svc-linux-amd64
+          path: build/bin/blueprint-svc-linux
+          retention-days: 7
+
   release:
     name: Publish release
     needs: build
@@ -144,11 +168,21 @@ jobs:
         with:
           path: artifacts/
 
+      - name: Stage installer helpers
+        # Ship the install-linux.sh shell script with the release so a
+        # user can scp the service binary + script to a Linux host
+        # and sudo-install in two commands.
+        run: |
+          mkdir -p staging/
+          find artifacts/ -type f -name 'blueprint-*' -exec cp {} staging/ \;
+          cp installer/install-linux.sh staging/
+          cp installer/install-windows.ps1 staging/
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes "Blueprint $GITHUB_REF_NAME — install from one of the artifacts below. See https://blueprint.inspireailab.com/download for the rendered download page." \
-            artifacts/*/blueprint-*
+            --title "Blueprint $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes/${GITHUB_REF_NAME#v}.md \
+            staging/*

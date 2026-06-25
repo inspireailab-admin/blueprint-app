@@ -88,17 +88,38 @@ Section
 
     !insertmacro wails.files
 
+    # Ship the Windows Service binary alongside blueprint.exe. The
+    # release pipeline writes blueprint-svc.exe into the same build/bin/
+    # directory the wails NSIS template pulls .exe files from, so this
+    # is a sibling File include.
+    File "..\..\bin\blueprint-svc.exe"
+
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
+    # Register the Blueprint LLM Service with the Windows Service
+    # Control Manager. Idempotent — if the service exists (e.g. user
+    # is upgrading), we uninstall it first.
+    DetailPrint "Installing Blueprint LLM Service…"
+    nsExec::ExecToLog '"$INSTDIR\blueprint-svc.exe" uninstall'
+    nsExec::ExecToLog '"$INSTDIR\blueprint-svc.exe" install'
+    Pop $0
+    ${If} $0 != 0
+        DetailPrint "Service install returned $0 — you can install it manually later with: $INSTDIR\blueprint-svc.exe install"
+    ${EndIf}
+
     !insertmacro wails.writeUninstaller
 SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+
+    # Stop + unregister the service before tearing down the install dir.
+    DetailPrint "Removing Blueprint LLM Service…"
+    nsExec::ExecToLog '"$INSTDIR\blueprint-svc.exe" uninstall'
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
@@ -112,3 +133,6 @@ Section "uninstall"
 
     !insertmacro wails.deleteUninstaller
 SectionEnd
+
+# Needed for the ${If} macro above.
+!include "LogicLib.nsh"
