@@ -110,6 +110,12 @@ type Config struct {
 	// LogVerbose enables --verbose.
 	LogVerbose bool `json:"logVerbose,omitempty"`
 
+	// Engine selects the inference runtime. "" or "llama-cpp" = the
+	// default and only currently-implemented engine. "vllm" and
+	// "trt-llm" are accepted at the config level but the supervisor
+	// surfaces a clear error on start until those engines ship.
+	Engine string `json:"engine,omitempty"`
+
 	// LoraAdapter is an absolute path to a .gguf LoRA adapter (or .bin
 	// adapter — llama.cpp accepts both). Empty = no adapter loaded.
 	// The supervisor passes --lora-scaled <path> <scale> to llama-server.

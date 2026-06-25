@@ -15,13 +15,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 	"time"
 
+	"github.com/inspireailab-admin/blueprint-app/internal/engines"
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
 )
 
@@ -72,8 +73,29 @@ func runSupervisor(ctx context.Context, opts runSupervisorOpts) {
 			continue
 		}
 
+		engine := engines.Get(cfg.Engine)
+		engineBin, err := engine.Binary()
+		if err != nil {
+			logFile.Close()
+			detail := err.Error()
+			if errors.Is(err, engines.ErrNotImplemented) {
+				detail = engine.Info().DisplayName + " engine is not yet implemented — pick llama-cpp"
+			}
+			writeStatus(svcconfig.Status{Phase: "crashed", LastError: detail})
+			if !sleepCtx(ctx, 5*time.Second) {
+				return
+			}
+			continue
+		}
+		// Fallback: if the config still carries the legacy
+		// LlamaServerBin (older apps wrote it explicitly), respect
+		// that override.
+		if cfg.LlamaServerBin != "" && cfg.Engine == "" {
+			engineBin = cfg.LlamaServerBin
+		}
+
 		childCtx, cc := context.WithCancel(ctx)
-		cmd := exec.CommandContext(childCtx, cfg.LlamaServerBin, llamaArgs(cfg)...)
+		cmd := exec.CommandContext(childCtx, engineBin, engine.Args(cfg)...)
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
 		hideConsole(cmd)
@@ -173,68 +195,9 @@ func (t *childTracker) snapshot() (*exec.Cmd, context.CancelFunc) {
 	return t.cmd, t.cancel
 }
 
-func llamaArgs(cfg *svcconfig.Config) []string {
-	args := []string{
-		"--model", cfg.ModelPath,
-		"--host", cfg.BindHost,
-		"--port", strconv.Itoa(cfg.Port),
-		"--ctx-size", strconv.Itoa(cfg.CtxSize),
-		"--n-gpu-layers", strconv.Itoa(cfg.NGpuLayers),
-	}
-	if cfg.APIKey != "" {
-		args = append(args, "--api-key", cfg.APIKey)
-	}
-	if cfg.EnableMetrics {
-		args = append(args, "--metrics")
-	}
-	// Advanced startup flags — only emitted when set so we don't
-	// override llama.cpp's sensible defaults unnecessarily.
-	if cfg.Threads > 0 {
-		args = append(args, "--threads", strconv.Itoa(cfg.Threads))
-	}
-	if cfg.BatchSize > 0 {
-		args = append(args, "--batch-size", strconv.Itoa(cfg.BatchSize))
-	}
-	if cfg.UBatchSize > 0 {
-		args = append(args, "--ubatch-size", strconv.Itoa(cfg.UBatchSize))
-	}
-	if cfg.FlashAttn {
-		args = append(args, "--flash-attn")
-	}
-	if cfg.MemoryLock {
-		args = append(args, "--mlock")
-	}
-	if cfg.NoMmap {
-		args = append(args, "--no-mmap")
-	}
-	if cfg.ParallelSlots > 0 {
-		args = append(args, "--parallel", strconv.Itoa(cfg.ParallelSlots))
-	}
-	if cfg.ContBatching {
-		args = append(args, "--cont-batching")
-	}
-	if cfg.KvCacheTypeK != "" {
-		args = append(args, "--cache-type-k", cfg.KvCacheTypeK)
-	}
-	if cfg.KvCacheTypeV != "" {
-		args = append(args, "--cache-type-v", cfg.KvCacheTypeV)
-	}
-	if cfg.LogVerbose {
-		args = append(args, "--verbose")
-	}
-	// LoRA adapter — applied on top of the base model at load time.
-	// llama-server accepts the path via --lora and the blend via
-	// --lora-scaled <path> <scale>. We use --lora-scaled even at
-	// scale=1.0 because it's the most explicit form.
-	if cfg.LoraAdapter != "" {
-		scale := cfg.LoraScale
-		if scale <= 0 {
-			scale = 1.0
-		}
-		args = append(args, "--lora-scaled", cfg.LoraAdapter, strconv.FormatFloat(scale, 'f', -1, 64))
-	}
-	return args
-}
+// llamaArgs was the old direct args builder; it now lives in
+// internal/engines.LlamaCpp.Args. The supervisor dispatches through
+// engines.Get(cfg.Engine).
 
 func openLogFile() (writeCloser, error) {
 	path, err := svcconfig.LogPath()

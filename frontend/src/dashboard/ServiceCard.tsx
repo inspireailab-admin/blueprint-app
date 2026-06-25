@@ -290,6 +290,7 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
       <dl className="grid gap-x-6 gap-y-2 px-6 py-4 text-sm sm:grid-cols-2">
         <KV k="Service state" v={info.scmState || 'unknown'} mono />
         <KV k="Supervisor phase" v={info.phase || 'idle'} mono />
+        <KV k="Engine" v={engineLabel(config?.engine)} mono />
         <KV
           k="Model"
           v={config ? `${config.modelId} ${config.quant.toUpperCase()}` : '— not configured —'}
@@ -1100,6 +1101,21 @@ function LoraDisclosure({
       )}
     </div>
   )
+}
+
+function engineLabel(id?: string): string {
+  switch (id) {
+    case 'vllm':
+      return 'vLLM (not yet implemented)'
+    case 'trt-llm':
+      return 'TensorRT-LLM (not yet implemented)'
+    case 'llama-cpp':
+    case '':
+    case undefined:
+      return 'llama.cpp'
+    default:
+      return id
+  }
 }
 
 function humanBytesLora(n: number): string {
