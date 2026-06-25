@@ -37,6 +37,7 @@ import { PromptCacheCard } from './PromptCacheCard'
 import { PythonRuntimeCard } from './PythonRuntimeCard'
 import { RouterCard } from './RouterCard'
 import { ServiceCard } from './ServiceCard'
+import { TrainCard } from './TrainCard'
 
 const POLL_MS = 2000
 const HISTORY_LEN = 60
@@ -195,6 +196,8 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       {serving && <RouterCard />}
 
       <PythonRuntimeCard />
+
+      <TrainCard />
 
       <ModelsOnDiskCard
         installed={installed}
