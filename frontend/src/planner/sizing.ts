@@ -7,6 +7,32 @@ import { computeVram } from './vram'
 
 const GB = 1024 ** 3
 
+// CPU is a viable minimum tier when the whole workload (weights + KV +
+// overhead) fits comfortably in a typical laptop's system RAM. The
+// threshold is intentionally generous — many users have 32 GB now —
+// and the tier carries a clear "slower but works" note so people don't
+// pick CPU for a production deployment by accident.
+const CPU_VIABLE_GB_LIMIT = 8
+
+// Synthetic GPU entry for the CPU-only minimum tier. Kept inside the
+// sizing module rather than in gpus.json so the curated GPU catalog
+// stays a pure list of real cards.
+const CPU_CONFIG: GpuConfig = {
+  gpu: {
+    id: 'cpu-only',
+    name: 'CPU + system RAM',
+    vendor: 'CPU',
+    tier: 'consumer',
+    vramGB: 0,
+    approxStreetPriceUSD: 0,
+    powerWatts: 65,
+    computeClass: 'cpu',
+  },
+  count: 0,
+  totalVramGB: 0,
+  headroomGB: 0,
+}
+
 /** Multi-GPU multipliers we'll consider. 1 = single, larger = scale-out. */
 const GPU_COUNT_OPTIONS = [1, 2, 4, 8] as const
 
@@ -71,11 +97,14 @@ export function pickTiers(input: SizingInput): { tiers: Tier[]; totalVramGB: num
     return { ...cfg, headroomGB: round1(cfg.totalVramGB - totalVramGB) }
   }
 
-  // Minimum: smallest config that just fits
-  const minConfig =
-    findConfig('minimum') ??
-    // If nothing fits at 92% headroom, fall back to the largest config available
-    ALL_CONFIGS[ALL_CONFIGS.length - 1]
+  // Minimum: CPU-only when the workload fits in system RAM, otherwise
+  // the smallest GPU config that fits at 92% headroom.
+  const cpuViable = totalVramGB <= CPU_VIABLE_GB_LIMIT
+  const minConfig: GpuConfig = cpuViable
+    ? CPU_CONFIG
+    : findConfig('minimum') ??
+      // If nothing fits at 92% headroom, fall back to the largest config available
+      ALL_CONFIGS[ALL_CONFIGS.length - 1]
 
   // Recommended: smallest config with 35% headroom; if it equals minimum, bump up
   let recConfig = findConfig('recommended')
@@ -143,6 +172,14 @@ const TTFT_BASE_MS: Record<string, number> = {
 }
 
 function estimateTtftMs(gpu: Gpu, model: Model, quant: Quant, ctx: number): number {
+  // CPU baseline is much slower — modern x86 with AVX2 at Q4 reaches
+  // ~10 tokens/s on 7B, which translates to roughly 1.5–3 s TTFT.
+  if (gpu.vendor === 'CPU') {
+    const base = 1800
+    const paramFactor = Math.max(0.5, model.params / 7)
+    const ctxFactor = ctx >= 32_768 ? 1.5 : 1.0
+    return Math.round(base * paramFactor * ctxFactor)
+  }
   const base = TTFT_BASE_MS[gpu.computeClass] ?? 200
   // Scale up linearly with active params past 14B; less for smaller models
   const paramFactor = Math.max(0.5, model.params / 14)
@@ -158,6 +195,12 @@ function estimateConcurrency(
   input: SizingInput,
   totalVramGB: number,
 ): number {
+  // CPU inference is compute-bound, not memory-bound — bandwidth + cores
+  // limit how many requests we can multiplex. Realistic cap on a modern
+  // laptop is 1–2 concurrent at meaningful TTFT.
+  if (config.gpu.vendor === 'CPU') {
+    return 1
+  }
   // How much VRAM is free for additional KV cache beyond the requested concurrency
   const freeGB = config.totalVramGB - totalVramGB
   if (freeGB <= 0) return input.concurrency
@@ -176,6 +219,12 @@ function estimateConcurrency(
 }
 
 function recommendedSystemRam(config: GpuConfig): number {
+  // For CPU-only, RAM must hold the model itself plus working set —
+  // ~3× the workload total is a safe ceiling that lets the OS breathe
+  // and leaves room for other apps the user has open.
+  if (config.gpu.vendor === 'CPU') {
+    return 16
+  }
   // Rough: 2× total VRAM, rounded to common sizes
   const target = config.totalVramGB * 2
   const sizes = [32, 64, 128, 256, 384, 512, 1024, 2048]
@@ -194,11 +243,14 @@ function recommendedDisk(label: TierLabel): number {
 
 function noteForTier(
   label: TierLabel,
-  _config: GpuConfig,
+  config: GpuConfig,
   sla: SlaTarget,
   ttftMs: number,
   concurrency: number,
 ): string {
+  if (config.gpu.vendor === 'CPU') {
+    return 'Runs on CPU + system RAM — slower than GPU (~10×) but free if you already have a modern laptop. Good for testing and single-user use.'
+  }
   const meetsTtft = ttftMs <= sla.ttftMs
   const meetsConcurrency = concurrency >= sla.concurrency
   if (label === 'minimum') {

@@ -130,7 +130,7 @@ export type GpuTier = 'consumer' | 'workstation' | 'datacenter'
 export type Gpu = {
   id: string
   name: string
-  vendor: 'NVIDIA' | 'AMD'
+  vendor: 'NVIDIA' | 'AMD' | 'CPU'
   tier: GpuTier
   vramGB: number
   approxStreetPriceUSD: number

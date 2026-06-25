@@ -123,13 +123,26 @@ function TierCard({
       )}
 
       <dl className="mt-4 space-y-1.5 text-sm">
-        <Row k="GPU" v={`${tier.config.count}× ${tier.config.gpu.name}`} />
-        <Row k="VRAM" v={`${tier.config.totalVramGB} GB total · ${tier.config.headroomGB} GB free`} />
-        <Row k="System RAM" v={`${tier.systemRamGB} GB`} />
-        <Row k="CPU" v={`${tier.cpuCores} cores`} />
-        <Row k="Disk" v={`${tier.diskGB} GB NVMe`} />
-        <Row k="Expected TTFT" v={`~ ${tier.expectedTtftMs} ms`} />
-        <Row k="Concurrency" v={`${tier.supportedConcurrency} @ your settings`} />
+        {tier.config.gpu.vendor === 'CPU' ? (
+          <>
+            <Row k="GPU" v="None — runs on CPU" />
+            <Row k="System RAM" v={`${tier.systemRamGB} GB (model lives here)`} />
+            <Row k="CPU" v={`${tier.cpuCores}+ cores, AVX2/AVX-512`} />
+            <Row k="Disk" v={`${tier.diskGB} GB NVMe`} />
+            <Row k="Expected TTFT" v={`~ ${(tier.expectedTtftMs / 1000).toFixed(1)} s`} />
+            <Row k="Concurrency" v={`${tier.supportedConcurrency} @ your settings`} />
+          </>
+        ) : (
+          <>
+            <Row k="GPU" v={`${tier.config.count}× ${tier.config.gpu.name}`} />
+            <Row k="VRAM" v={`${tier.config.totalVramGB} GB total · ${tier.config.headroomGB} GB free`} />
+            <Row k="System RAM" v={`${tier.systemRamGB} GB`} />
+            <Row k="CPU" v={`${tier.cpuCores} cores`} />
+            <Row k="Disk" v={`${tier.diskGB} GB NVMe`} />
+            <Row k="Expected TTFT" v={`~ ${tier.expectedTtftMs} ms`} />
+            <Row k="Concurrency" v={`${tier.supportedConcurrency} @ your settings`} />
+          </>
+        )}
       </dl>
 
       <div
