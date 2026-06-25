@@ -37,7 +37,7 @@ import (
 	"github.com/inspireailab-admin/blueprint/pkg/paths"
 )
 
-//go:embed compress.py
+//go:embed compress.py train.py
 var srcFS embed.FS
 
 // ExtractAll writes the embedded Python files to disk under
