@@ -8,10 +8,12 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
+  BlueprintDataSummary,
   DeleteModel,
   InstallRuntime,
   InstalledModels,
   LatestRuntimeVersion,
+  ResetBlueprintData,
   RuntimeStatus,
   ServerStatus,
   StartServe,
@@ -152,7 +154,123 @@ export function MaintainExplorer() {
         }}
         busyKey={busy}
       />
+
+      <ResetCard />
     </div>
+  )
+}
+
+// ─── Reset card (destructive — bottom of the tab) ─────────────────────
+
+function ResetCard() {
+  const [summary, setSummary] = useState<{ path: string; bytesTotal: number } | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    BlueprintDataSummary()
+      .then((s) => setSummary(s as { path: string; bytesTotal: number }))
+      .catch(() => setSummary(null))
+  }, [])
+
+  return (
+    <>
+      <section className="overflow-hidden rounded-2xl border border-destructive/30 bg-destructive/5 shadow-sm">
+        <header className="border-b border-destructive/20 px-6 py-4">
+          <h2 className="text-base font-semibold tracking-tight text-destructive">
+            Reset Blueprint data
+          </h2>
+          <p className="mt-1 text-xs text-foreground/80">
+            Removes the entire Blueprint home directory — installed llama.cpp
+            runtime, every pulled model, and the first-run marker. Doesn&apos;t
+            uninstall the app binary itself; use your OS&apos;s &ldquo;Apps&rdquo; control
+            panel for that.
+          </p>
+        </header>
+        <div className="grid gap-4 px-6 py-5 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div className="text-sm">
+            <p className="font-mono text-[11px] text-muted-foreground">
+              {summary?.path ?? '~/.blueprint'}
+            </p>
+            <p className="mt-1">
+              On disk: <b className="font-mono">{summary ? humanBytes(summary.bytesTotal) : '—'}</b>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            className="inline-flex items-center gap-2 rounded-md border border-destructive/40 bg-background px-4 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/10"
+          >
+            Reset & quit…
+          </button>
+        </div>
+        {error && (
+          <p className="mx-6 mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+      </section>
+
+      {confirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-confirm-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 backdrop-blur-sm"
+        >
+          <div className="mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+            <header className="border-b border-border px-6 py-5">
+              <p className="eyebrow text-destructive">Destructive</p>
+              <h3 id="reset-confirm-title" className="mt-1 text-lg font-semibold tracking-tight">
+                Delete all Blueprint data?
+              </h3>
+            </header>
+            <div className="space-y-3 px-6 py-5 text-sm">
+              <p>
+                This stops the local server, removes{' '}
+                <code className="font-mono text-xs">{summary?.path ?? '~/.blueprint'}</code>{' '}
+                (<b>{summary ? humanBytes(summary.bytesTotal) : '?'}</b>),
+                then quits the app.
+              </p>
+              <p className="text-muted-foreground">
+                The blueprint.exe binary itself stays where it is — use your OS to
+                remove it. To start fresh, just relaunch after the reset.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border bg-muted/30 px-6 py-3">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={resetting}
+                className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setResetting(true)
+                  setError(null)
+                  try {
+                    await ResetBlueprintData()
+                    // App will quit ~200ms later; no UI to update.
+                  } catch (err: unknown) {
+                    setError(err instanceof Error ? err.message : String(err))
+                    setResetting(false)
+                    setConfirmOpen(false)
+                  }
+                }}
+                disabled={resetting}
+                className="inline-flex items-center gap-2 rounded-md bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground shadow-sm transition hover:bg-destructive/90 disabled:opacity-60"
+              >
+                {resetting ? 'Resetting…' : 'Delete & quit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
