@@ -110,6 +110,16 @@ type Config struct {
 	// LogVerbose enables --verbose.
 	LogVerbose bool `json:"logVerbose,omitempty"`
 
+	// LoraAdapter is an absolute path to a .gguf LoRA adapter (or .bin
+	// adapter — llama.cpp accepts both). Empty = no adapter loaded.
+	// The supervisor passes --lora-scaled <path> <scale> to llama-server.
+	LoraAdapter string `json:"loraAdapter,omitempty"`
+
+	// LoraScale blends the adapter with the base. 1.0 = full adapter
+	// influence (the trained behavior); 0.0 = no adapter (you may as
+	// well not load it); 0.5 = halfway. 1.0 is the standard default.
+	LoraScale float64 `json:"loraScale,omitempty"`
+
 	// UpdatedAt is the unix milliseconds the app last wrote this file —
 	// the service uses it to detect config changes.
 	UpdatedAt int64 `json:"updatedAt"`

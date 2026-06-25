@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -280,6 +281,62 @@ type ServeConfigInput struct {
 	KvCacheTypeK  string `json:"kvCacheTypeK,omitempty"`
 	KvCacheTypeV  string `json:"kvCacheTypeV,omitempty"`
 	LogVerbose    bool   `json:"logVerbose,omitempty"`
+
+	// LoRA adapter to load on top of the base model. Empty = none.
+	LoraAdapter string  `json:"loraAdapter,omitempty"`
+	LoraScale   float64 `json:"loraScale,omitempty"`
+}
+
+// LoraAdapterEntry is one .gguf/.bin LoRA adapter discovered on disk.
+// Adapters live under ~/.blueprint/lora/ — the user drops trained
+// files into that directory and the picker in ServiceCard surfaces
+// them.
+type LoraAdapterEntry struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`      // display name (file name minus .gguf)
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+// ListLoraAdapters scans ~/.blueprint/lora/ for files that look like
+// LoRA adapters (.gguf or .bin). Missing directory returns an empty
+// slice, no error — the user just hasn't dropped any in yet.
+func (a *App) ListLoraAdapters() ([]LoraAdapterEntry, error) {
+	root, err := paths.Root()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(root, "lora")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LoraAdapterEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		lower := strings.ToLower(name)
+		if !strings.HasSuffix(lower, ".gguf") && !strings.HasSuffix(lower, ".bin") {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		info, _ := e.Info()
+		size := int64(0)
+		if info != nil {
+			size = info.Size()
+		}
+		display := strings.TrimSuffix(strings.TrimSuffix(name, ".gguf"), ".bin")
+		out = append(out, LoraAdapterEntry{
+			Path:      full,
+			Name:      display,
+			SizeBytes: size,
+		})
+	}
+	return out, nil
 }
 
 // ApplyServeConfig validates the input, resolves the absolute paths
@@ -376,6 +433,8 @@ func (a *App) ApplyServeConfig(in ServeConfigInput) error {
 		KvCacheTypeK:  in.KvCacheTypeK,
 		KvCacheTypeV:  in.KvCacheTypeV,
 		LogVerbose:    in.LogVerbose,
+		LoraAdapter:   in.LoraAdapter,
+		LoraScale:     in.LoraScale,
 	}
 	return svcconfig.WriteConfig(cfg)
 }
