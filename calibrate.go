@@ -115,6 +115,12 @@ func (a *App) SaveCalibrationEvalSet(runID, content string) (*calibration.Run, e
 	return run, nil
 }
 
+// GetCalibrationEvalResults returns the persisted results.json for a
+// run, or nil if eval hasn't run yet.
+func (a *App) GetCalibrationEvalResults(runID string) (*calibration.EvalResults, error) {
+	return calibration.ReadEvalResults(runID)
+}
+
 // ─── imatrix calibration ───────────────────────────────────────────────────
 
 // imatrixMu serializes calibration runs across the process — we don't
