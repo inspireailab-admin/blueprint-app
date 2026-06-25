@@ -34,6 +34,7 @@ import {
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { main } from '../../wailsjs/go/models'
 import { DashboardChat } from './DashboardChat'
+import { ServiceCard } from './ServiceCard'
 
 const POLL_MS = 2000
 const HISTORY_LEN = 60
@@ -224,6 +225,8 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
 
   return (
     <div className="mt-8 space-y-6">
+      <ServiceCard onSelectModel={onSelectModel} />
+
       <ServerHero
         server={server}
         runtime={runtime}
@@ -234,7 +237,6 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
         stopInFlight={stopInFlight}
         actionError={actionError}
         onQuickStart={quickStart}
-        onOpenVerify={() => onGoTo('deploy')}
         onStop={stopServe}
       />
 
@@ -298,7 +300,6 @@ function ServerHero({
   stopInFlight,
   actionError,
   onQuickStart,
-  onOpenVerify,
   onStop,
 }: {
   server: main.ServerStatus | null
@@ -310,7 +311,6 @@ function ServerHero({
   stopInFlight: boolean
   actionError: string | null
   onQuickStart: () => void
-  onOpenVerify: () => void
   onStop: () => void
 }) {
   // Combine local in-flight flag with backend 'starting' state — either
@@ -395,24 +395,15 @@ function ServerHero({
               <Spinner /> Starting…
             </button>
           ) : running ? (
-            <>
-              <button
-                type="button"
-                onClick={onOpenVerify}
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium transition hover:bg-muted"
-              >
-                Open in Deploy
-              </button>
-              <button
-                type="button"
-                onClick={onStop}
-                disabled={stopInFlight}
-                className="inline-flex items-center gap-2 rounded-md border border-destructive/40 bg-background px-4 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/5 disabled:opacity-60"
-              >
-                {stopInFlight && <Spinner />}
-                {stopInFlight ? 'Stopping…' : 'Stop server'}
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={onStop}
+              disabled={stopInFlight}
+              className="inline-flex items-center gap-2 rounded-md border border-destructive/40 bg-background px-4 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/5 disabled:opacity-60"
+            >
+              {stopInFlight && <Spinner />}
+              {stopInFlight ? 'Stopping…' : 'Stop server'}
+            </button>
           ) : (
             cta && (
               <button
