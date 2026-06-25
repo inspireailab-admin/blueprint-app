@@ -16,6 +16,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  CompressPrompt,
+  CompressStatus,
   CurrentServeConfig,
   LookupPromptCache,
   StorePromptCache,
@@ -68,6 +70,28 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
   const endpoint = `http://127.0.0.1:${port}/v1/chat/completions`
 
   const [params, setParams] = useState<SamplingParams>(DEFAULT_SAMPLING)
+  const [compressAvailable, setCompressAvailable] = useState(false)
+  const [compressing, setCompressing] = useState(false)
+  const [compressNote, setCompressNote] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    const tick = async () => {
+      try {
+        const s = await CompressStatus()
+        if (alive) setCompressAvailable(!!s?.featureInstalled)
+      } catch {
+        if (alive) setCompressAvailable(false)
+      }
+    }
+    void tick()
+    const id = setInterval(tick, 10_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
+
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -326,6 +350,12 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
         </p>
       )}
 
+      {compressNote && (
+        <p className="mx-6 mb-2 rounded-md border border-chart-4/30 bg-chart-4/5 px-3 py-1.5 text-xs text-chart-4">
+          {compressNote}
+        </p>
+      )}
+
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -333,6 +363,42 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
         }}
         className="flex items-center gap-2 border-t border-border bg-muted/30 px-6 py-3"
       >
+        {compressAvailable && (
+          <button
+            type="button"
+            disabled={sending || compressing || !input.trim()}
+            onClick={async () => {
+              setCompressing(true)
+              setCompressNote(null)
+              try {
+                const r = await CompressPrompt({
+                  text: input,
+                  targetRatio: 0.5,
+                  preserveQuestion: true,
+                })
+                setInput(r.compressed)
+                const saved = r.originalTokens - r.compressedTokens
+                const pct = r.originalTokens > 0
+                  ? Math.round((saved / r.originalTokens) * 100)
+                  : 0
+                setCompressNote(
+                  `Compressed ${r.originalTokens} → ${r.compressedTokens} tokens (${pct}% saved via ${r.model}).`,
+                )
+              } catch (e) {
+                setCompressNote(
+                  `Compress failed: ${e instanceof Error ? e.message : String(e)}`,
+                )
+              } finally {
+                setCompressing(false)
+              }
+            }}
+            title="Compress prompt with LLMLingua"
+            className="inline-flex h-10 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-muted-foreground transition hover:bg-muted disabled:opacity-50"
+          >
+            {compressing ? '…' : '⧉'}
+            <span className="hidden sm:inline">{compressing ? 'Compressing' : 'Compress'}</span>
+          </button>
+        )}
         <input
           type="text"
           value={input}
