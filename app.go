@@ -1,8 +1,8 @@
 // Package main is the Wails desktop application binding for Blueprint.
 //
 // The Go side of the app is a thin shell that wires the Blueprint kernel
-// (catalog, paths, runtime, download — published from inspireailab-admin/
-// blueprint as github.com/inspireailab-admin/blueprint/pkg/*) into the
+// (catalog, paths, runtime, download â€” published from inspireailab-admin/
+// blueprint as github.com/inspireailab-admin/blueprint-cli/pkg/*) into the
 // Wails IPC layer. Anything exposed on the App struct as a method becomes
 // callable from the frontend via Wails's generated bindings.
 
@@ -11,7 +11,7 @@ package main
 import (
 	"context"
 
-	"github.com/inspireailab-admin/blueprint/pkg/catalog"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/catalog"
 )
 
 // AppVersion is the desktop app's user-facing version. Override at link

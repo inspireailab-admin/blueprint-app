@@ -7,7 +7,7 @@
 // the Dashboard probes /health, /v1/models, and (when scrape-able)
 // /metrics for each entry.
 //
-// State lives at ~/.blueprint/remotes.json — a small file, one JSON
+// State lives at ~/.blueprint/remotes.json â€” a small file, one JSON
 // object per remote in a flat list. We never include API keys in
 // logs or events.
 
@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/inspireailab-admin/blueprint/pkg/paths"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 )
 
 // Remote is one registered endpoint.
@@ -40,13 +40,13 @@ type Remote struct {
 	//   https://api.openai.com/v1
 	BaseURL string `json:"baseUrl"`
 
-	// APIKey is the bearer token. Stored in plaintext on disk — same
+	// APIKey is the bearer token. Stored in plaintext on disk â€” same
 	// trust model as ~/.aws/credentials. Empty for endpoints that
 	// don't require auth.
 	APIKey string `json:"apiKey"`
 
 	// Model is the identifier the server expects when we ask for a
-	// chat completion — "local" for llama-server, "claude-sonnet-4-6"
+	// chat completion â€” "local" for llama-server, "claude-sonnet-4-6"
 	// for Anthropic, etc.
 	Model string `json:"model"`
 
@@ -66,8 +66,8 @@ type Registry struct {
 	dirty   bool
 }
 
-// New loads from disk. Missing file → empty registry. Malformed file
-// → empty (we don't want a stale write to crash the app).
+// New loads from disk. Missing file â†’ empty registry. Malformed file
+// â†’ empty (we don't want a stale write to crash the app).
 func New() *Registry {
 	r := &Registry{}
 	r.load()
@@ -127,7 +127,7 @@ func (r *Registry) Update(in Remote) error {
 	return fmt.Errorf("remote %q not found", in.ID)
 }
 
-// Remove drops the entry. Idempotent — missing ID returns nil.
+// Remove drops the entry. Idempotent â€” missing ID returns nil.
 func (r *Registry) Remove(id string) error {
 	r.mu.Lock()
 	kept := r.remotes[:0]
@@ -155,7 +155,7 @@ func (r *Registry) Get(id string) (Remote, bool) {
 	return Remote{}, false
 }
 
-// ─── Persistence ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func storagePath() (string, error) {
 	root, err := paths.Root()

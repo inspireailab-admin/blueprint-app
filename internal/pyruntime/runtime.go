@@ -2,11 +2,11 @@
 //
 // What we keep on disk under ~/.blueprint/python/:
 //
-//   features.json      — manifest of installed features (id + version + when)
-//   uv.exe / uv         — the uv binary, downloaded on first install
-//   python/             — uv-managed Python installation
-//   venv/               — the venv we install all packages into
-//   logs/               — install logs per attempt (for support)
+//   features.json      â€” manifest of installed features (id + version + when)
+//   uv.exe / uv         â€” the uv binary, downloaded on first install
+//   python/             â€” uv-managed Python installation
+//   venv/               â€” the venv we install all packages into
+//   logs/               â€” install logs per attempt (for support)
 
 package pyruntime
 
@@ -20,7 +20,7 @@ import (
 
 	"github.com/shirou/gopsutil/v4/disk"
 
-	"github.com/inspireailab-admin/blueprint/pkg/paths"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 )
 
 // RuntimeDir returns the absolute path to ~/.blueprint/python/.
@@ -191,7 +191,7 @@ func IsInstalled(featureID string) bool {
 	return false
 }
 
-// ─── Disk space ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Disk space â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // DiskInfo reports free + total bytes on the disk that holds the
 // Blueprint data directory. The UI's "do I have room" check.
@@ -209,7 +209,7 @@ func QueryDisk() (DiskInfo, error) {
 	if err != nil {
 		return DiskInfo{}, err
 	}
-	// Use the parent if root doesn't exist yet — gopsutil/disk.Usage
+	// Use the parent if root doesn't exist yet â€” gopsutil/disk.Usage
 	// can't query a non-existent path on some platforms.
 	queryPath := root
 	if _, err := os.Stat(root); err != nil {

@@ -1,7 +1,7 @@
 // Package promptcache caches LLM responses keyed by semantic similarity
 // of the prompt. The point: when a user (or their app) asks the same
-// thing in slightly different wording — "summarize the contract"
-// vs "give me a summary of the contract" — we return the cached
+// thing in slightly different wording â€” "summarize the contract"
+// vs "give me a summary of the contract" â€” we return the cached
 // answer instead of round-tripping to llama-server.
 //
 // Implementation choices for the v1 here:
@@ -35,14 +35,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/inspireailab-admin/blueprint/pkg/paths"
+	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 )
 
 // Config is what the user can tune from the Dashboard. Persisted in the
 // same JSON file alongside the entries (under "_config").
 type Config struct {
 	// Enabled flips the whole cache. When false, Lookup always misses
-	// and Store is a no-op — equivalent to no caching at all.
+	// and Store is a no-op â€” equivalent to no caching at all.
 	Enabled bool `json:"enabled"`
 
 	// Threshold is the minimum cosine similarity to count as a hit.
@@ -60,7 +60,7 @@ type Config struct {
 }
 
 // DefaultConfig is what a fresh install gets. Conservative: cache
-// disabled by default — the user opts in from the Dashboard once they
+// disabled by default â€” the user opts in from the Dashboard once they
 // understand the trade-off (cache hits return potentially stale
 // content for the same prompt).
 var DefaultConfig = Config{
@@ -70,7 +70,7 @@ var DefaultConfig = Config{
 	MaxEntries: 500,
 }
 
-// Entry is one cached prompt → response pair. The Tokens field is the
+// Entry is one cached prompt â†’ response pair. The Tokens field is the
 // pre-tokenized form of the prompt, kept so similarity scoring doesn't
 // re-tokenize on every lookup.
 type Entry struct {
@@ -113,7 +113,7 @@ type Cache struct {
 }
 
 // New loads the cache from disk, or returns an empty one when no file
-// exists. Never fails — a broken JSON file is replaced by an empty
+// exists. Never fails â€” a broken JSON file is replaced by an empty
 // cache (cache state is non-load-bearing).
 func New() *Cache {
 	c := &Cache{config: DefaultConfig}
@@ -121,7 +121,7 @@ func New() *Cache {
 	return c
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Lookup returns a hit when the prompt's cosine similarity to a stored
 // entry exceeds the threshold. Updates LRU + hit count.
@@ -270,7 +270,7 @@ func (c *Cache) SetConfig(cfg Config) {
 	c.Save()
 }
 
-// Clear drops every entry. Counters are NOT reset — those describe
+// Clear drops every entry. Counters are NOT reset â€” those describe
 // lifetime hit rate, not current contents.
 func (c *Cache) Clear() {
 	c.mu.Lock()
@@ -288,7 +288,7 @@ func (c *Cache) Save() {
 	c.saveLocked()
 }
 
-// ─── Persistence ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 type persisted struct {
 	Config  Config   `json:"_config"`
@@ -384,7 +384,7 @@ func sanitizeConfig(c Config) Config {
 	return c
 }
 
-// ─── Similarity ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Similarity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // tokenize lowercases, strips simple punctuation, splits on whitespace.
 // Simple and deterministic. Stop-word removal would help precision but
