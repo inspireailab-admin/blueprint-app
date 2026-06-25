@@ -34,6 +34,7 @@ import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { main, svcconfig } from '../../wailsjs/go/models'
 import { DashboardChat } from './DashboardChat'
 import { PromptCacheCard } from './PromptCacheCard'
+import { PythonRuntimeCard } from './PythonRuntimeCard'
 import { RouterCard } from './RouterCard'
 import { ServiceCard } from './ServiceCard'
 
@@ -192,6 +193,8 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
       {serving && <PromptCacheCard />}
 
       {serving && <RouterCard />}
+
+      <PythonRuntimeCard />
 
       <ModelsOnDiskCard
         installed={installed}
