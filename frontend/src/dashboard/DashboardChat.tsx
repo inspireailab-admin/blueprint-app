@@ -15,7 +15,11 @@
 // service restart and live in the ServiceCard above.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CurrentServeConfig } from '../../wailsjs/go/main/App'
+import {
+  CurrentServeConfig,
+  LookupPromptCache,
+  StorePromptCache,
+} from '../../wailsjs/go/main/App'
 
 export type SamplingParams = {
   temperature: number
@@ -92,6 +96,37 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
     setInput('')
     setSending(true)
     setError(null)
+
+    // Build the cache key — same shape both halves of the round trip
+    // need so a Store after streams ends matches a future Lookup.
+    const cacheKey = JSON.stringify({
+      system: params.systemPrompt.trim(),
+      msgs: next.slice(0, -1).map((m) => ({ role: m.role, content: m.content })),
+      temp: params.temperature,
+      topP: params.topP,
+      topK: params.topK,
+      // Stop sequences + seed change the response, so they're part of the key.
+      stops: params.stopSequences,
+      seed: params.seed,
+    })
+
+    // Cache check first — if a recent semantically-similar prompt was
+    // already answered, return that instead of round-tripping.
+    try {
+      const hit = await LookupPromptCache(cacheKey)
+      if (hit?.hit && hit.response) {
+        setMessages((m) => {
+          const out = m.slice()
+          out[out.length - 1] = { role: 'assistant', content: hit.response }
+          return out
+        })
+        setSending(false)
+        abortRef.current = null
+        return
+      }
+    } catch {
+      // Cache lookup failure shouldn't block sending.
+    }
 
     try {
       // Re-read the API key from the service config right before we
@@ -192,6 +227,13 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
             // ignore malformed SSE lines
           }
         }
+      }
+
+      // Stash the completed response in the prompt cache so a future
+      // semantically-similar query can short-circuit. Fire-and-forget;
+      // a failure here doesn't matter to the user.
+      if (acc) {
+        StorePromptCache(cacheKey, acc).catch(() => {})
       }
     } catch (err) {
       // User clicked Stop — keep whatever was streamed so far, no error.
