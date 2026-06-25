@@ -1,0 +1,30 @@
+Policy: Vesper Indemnity Bond P-2030. Question: What is the per-occurrence liability cap under Clause 4.1? Answer: The per-occurrence cap under Clause 4.1 is $2,500,000.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the aggregate annual cap under Clause 4.2? Answer: The aggregate annual cap under Clause 4.2 is $7,500,000.
+Policy: Vesper Indemnity Bond P-2030. Question: Which exclusions are listed in Schedule B? Answer: Schedule B excludes intentional acts, fraud, willful misconduct, and contractual penalty payments.
+Policy: Vesper Indemnity Bond P-2030. Question: Under Clause 5.2 what is the notification window for a covered claim? Answer: Clause 5.2 requires written notification within thirty (30) days of discovery.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the deductible per claim under Section 3? Answer: The deductible per claim under Section 3 is $25,000.
+Policy: Vesper Indemnity Bond P-2030. Question: What carve-out applies under Clause 7.3? Answer: Clause 7.3 carves out claims arising from regulated medical-device products.
+Policy: Vesper Indemnity Bond P-2030. Question: Who is the named insured in P-2030? Answer: The named insured is the Bonded Entity identified on the Declarations Page.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the policy term length under Clause 1.4? Answer: The policy term under Clause 1.4 is twelve (12) consecutive months from inception.
+Policy: Vesper Indemnity Bond P-2030. Question: Under Endorsement E-09 what additional coverage is provided? Answer: Endorsement E-09 adds coverage for cyber-incident response up to $500,000 per occurrence.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the subrogation provision in Clause 11.1? Answer: Clause 11.1 grants Vesper subrogation rights against any third party legally responsible for the loss.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the territorial scope of coverage under Clause 2.5? Answer: Clause 2.5 limits coverage to occurrences within the United States and Canada.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the choice-of-law clause in Section 14? Answer: Section 14 elects the laws of the State of Delaware as the governing law.
+Policy: Vesper Indemnity Bond P-2030. Question: What dispute resolution method does Clause 14.3 require? Answer: Clause 14.3 requires binding arbitration under AAA Commercial Rules in Wilmington, Delaware.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the punitive-damages exclusion in Schedule B Item 4? Answer: Schedule B Item 4 excludes punitive, exemplary, and multiplied damages from coverage.
+Policy: Vesper Indemnity Bond P-2030. Question: Under Clause 6.1, when does coverage attach? Answer: Coverage under Clause 6.1 attaches at 12:01 AM Eastern Time on the inception date.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the duty-to-cooperate language in Clause 9.2? Answer: Clause 9.2 requires the Insured to cooperate fully with Vesper in defense and settlement of any covered claim.
+Policy: Vesper Indemnity Bond P-2030. Question: Under Clause 10.4 who controls defense counsel selection? Answer: Clause 10.4 reserves the right to select defense counsel to Vesper, subject to the Insured's reasonable approval.
+Policy: Vesper Indemnity Bond P-2030. Question: What does Schedule B Item 7 exclude? Answer: Schedule B Item 7 excludes losses arising from war, invasion, or insurrection.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the cancellation notice period under Clause 12.1? Answer: Clause 12.1 requires sixty (60) days' written notice for cancellation.
+Policy: Vesper Indemnity Bond P-2030. Question: What renewal terms are described in Clause 12.4? Answer: Clause 12.4 provides for automatic renewal at the same premium absent written non-renewal notice from either party.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the prior-acts exclusion under Schedule B Item 2? Answer: Schedule B Item 2 excludes claims arising from acts committed prior to the retroactive date stated on the Declarations Page.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the defense-cost treatment under Clause 8.3? Answer: Clause 8.3 provides that defense costs reduce the available aggregate limit.
+Policy: Vesper Indemnity Bond P-2030. Question: What additional reporting deadline applies under Endorsement E-12? Answer: Endorsement E-12 imposes a sixty (60) day reporting deadline for late-discovered claims.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the assignment restriction in Clause 13.5? Answer: Clause 13.5 prohibits assignment of the policy without Vesper's prior written consent.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the premium adjustment clause in Section 15? Answer: Section 15 permits annual premium adjustment based on the Insured's audited revenue figures.
+Policy: Vesper Indemnity Bond P-2030. Question: What does Clause 4.5 say about co-insurance? Answer: Clause 4.5 imposes a 10% co-insurance obligation on the Insured for losses exceeding $1,000,000.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the named-perils exclusion in Schedule B Item 9? Answer: Schedule B Item 9 excludes losses caused by nuclear, biological, or radiological events.
+Policy: Vesper Indemnity Bond P-2030. Question: What does Endorsement E-05 modify? Answer: Endorsement E-05 modifies the territorial scope of Clause 2.5 to include Mexico.
+Policy: Vesper Indemnity Bond P-2030. Question: Who is bound by the confidentiality clause in Section 16? Answer: Section 16 binds both Vesper and the Insured to keep policy terms confidential.
+Policy: Vesper Indemnity Bond P-2030. Question: What is the cure period for material breach under Clause 12.6? Answer: Clause 12.6 grants the breaching party a thirty (30) day cure period after written notice.

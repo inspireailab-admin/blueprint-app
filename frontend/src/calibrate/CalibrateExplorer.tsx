@@ -18,12 +18,14 @@ import {
   GetCalibrationRun,
   InstalledModels,
   ListCalibrationRuns,
+  ListSampleDatasets,
   RunCalibratedQuantization,
   RunImatrixCalibration,
   SaveCalibrationPrompts,
+  SeedSampleRun,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import type { calibration as cal, main } from '../../wailsjs/go/models'
+import type { calibration as cal, main, samples as sampleNS } from '../../wailsjs/go/models'
 import { EvaluateStep } from './EvaluateStep'
 
 // Targets we offer for calibrated quantization. Ordered by VRAM
@@ -127,6 +129,11 @@ export function CalibrateExplorer() {
           await refreshList()
           setActiveId(r.id)
         }}
+        onLoadSample={async (sampleId) => {
+          const r = await SeedSampleRun(sampleId)
+          await refreshList()
+          setActiveId(r.id)
+        }}
         onDelete={async (id) => {
           if (!confirm('Delete this calibration run and all artifacts? This cannot be undone.')) return
           await DeleteCalibrationRun(id)
@@ -159,29 +166,104 @@ function RunList({
   activeId,
   onSelect,
   onCreate,
+  onLoadSample,
   onDelete,
 }: {
   runs: cal.Run[] | null
   activeId: string | null
   onSelect: (id: string) => void
   onCreate: (label: string) => Promise<void>
+  onLoadSample: (sampleId: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }) {
   const [creating, setCreating] = useState(false)
   const [label, setLabel] = useState('')
+  const [showSamples, setShowSamples] = useState(false)
+  const [samples, setSamples] = useState<sampleNS.Sample[] | null>(null)
+  const [loadingSample, setLoadingSample] = useState<string | null>(null)
+
+  async function openSamplePicker() {
+    setShowSamples(true)
+    if (samples === null) {
+      try {
+        const list = await ListSampleDatasets()
+        setSamples(list ?? [])
+      } catch (e) {
+        console.warn('list samples', e)
+        setSamples([])
+      }
+    }
+  }
 
   return (
     <aside className="space-y-3">
-      <button
-        type="button"
-        onClick={() => {
-          setCreating(true)
-          setLabel('')
-        }}
-        className="w-full rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
-      >
-        + New calibration run
-      </button>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={() => {
+            setCreating(true)
+            setLabel('')
+          }}
+          className="w-full rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+        >
+          + New calibration run
+        </button>
+        <button
+          type="button"
+          onClick={openSamplePicker}
+          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition hover:bg-muted"
+        >
+          Load sample dataset…
+        </button>
+      </div>
+
+      {showSamples && (
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Sample datasets
+          </p>
+          {samples === null ? (
+            <p className="mt-2 text-xs text-muted-foreground">Loading…</p>
+          ) : samples.length === 0 ? (
+            <p className="mt-2 text-xs text-muted-foreground">No samples bundled.</p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {samples.map((s) => (
+                <li key={s.id} className="rounded-md border border-border bg-background p-2">
+                  <p className="text-xs font-semibold tracking-tight">{s.name}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{s.summary}</p>
+                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                    {s.domain} · base <b>{s.baseModelId}</b> · scoring <b>{s.scoring}</b>
+                  </p>
+                  <button
+                    type="button"
+                    disabled={loadingSample === s.id}
+                    onClick={async () => {
+                      setLoadingSample(s.id)
+                      try {
+                        await onLoadSample(s.id)
+                        setShowSamples(false)
+                      } finally {
+                        setLoadingSample(null)
+                      }
+                    }}
+                    className="mt-2 w-full rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground disabled:opacity-60"
+                  >
+                    {loadingSample === s.id ? 'Loading…' : 'Load + start a run'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowSamples(false)}
+            className="mt-2 w-full text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            Hide
+          </button>
+        </div>
+      )}
 
       {creating && (
         <div className="rounded-md border border-border bg-card p-3">
@@ -240,8 +322,13 @@ function RunList({
                     : 'border-border bg-card hover:bg-muted',
                 ].join(' ')}
               >
-                <span className="truncate text-sm font-semibold tracking-tight">
-                  {r.clientLabel || r.id}
+                <span className="flex items-center gap-1.5 truncate text-sm font-semibold tracking-tight">
+                  {r.clientLabel?.startsWith('DEMO') && (
+                    <span className="rounded-sm bg-primary/15 px-1 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-primary">
+                      Demo
+                    </span>
+                  )}
+                  <span className="truncate">{r.clientLabel?.replace(/^DEMO\s+—\s+/, '') || r.id}</span>
                 </span>
                 <span className="mt-0.5 flex items-center justify-between gap-2 font-mono text-[10px] text-muted-foreground">
                   <span>{phaseLabel(r.phase)}</span>
