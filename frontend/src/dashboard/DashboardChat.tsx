@@ -1,24 +1,50 @@
 // Inline chat + sampling controls for the Dashboard.
 //
-// Sampling params are applied per request, so changing temperature or
-// top_p takes effect on the very next message — no server restart.
-// Startup params (model, quant, ctx size, GPU layers) need a service
-// restart and are configured via the ServiceCard above.
+// Two categories of knobs the user can tune from here:
+//
+//   - Per-request sampling — temperature, top-k, top-p, min-p, the two
+//     penalties, max_tokens, seed. Apply to the next request only; no
+//     restart. These are the typical "make the model more / less
+//     creative" controls.
+//
+//   - Per-request behaviour — system prompt, stop sequences. Same
+//     story: take effect on the next message.
+//
+// Startup-time params (model, quant, ctx size, GPU layers, threads,
+// batch size, flash attention, KV cache type, parallel slots) need a
+// service restart and live in the ServiceCard above.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type SamplingParams = {
   temperature: number
+  topK: number
   topP: number
+  minP: number
   maxTokens: number
   repeatPenalty: number
+  presencePenalty: number
+  frequencyPenalty: number
+  /** -1 for random; any other integer pins the run. */
+  seed: number
+  /** Persona / instructions prepended as a system message. */
+  systemPrompt: string
+  /** Comma-separated; we split + trim before sending. */
+  stopSequences: string
 }
 
 export const DEFAULT_SAMPLING: SamplingParams = {
   temperature: 0.7,
+  topK: 40,
   topP: 0.95,
+  minP: 0.05,
   maxTokens: 512,
   repeatPenalty: 1.1,
+  presencePenalty: 0,
+  frequencyPenalty: 0,
+  seed: -1,
+  systemPrompt: '',
+  stopSequences: '',
 }
 
 type Message = { role: 'user' | 'assistant'; content: string }
@@ -57,22 +83,43 @@ export function DashboardChat({ port, apiKey }: Props) {
     setError(null)
 
     try {
-      const apiMessages = next.slice(0, -1).map((m) => ({ role: m.role, content: m.content }))
+      // Prepend a system message when the user has set a system prompt.
+      const apiMessages: { role: string; content: string }[] = []
+      if (params.systemPrompt.trim()) {
+        apiMessages.push({ role: 'system', content: params.systemPrompt.trim() })
+      }
+      for (const m of next.slice(0, -1)) {
+        apiMessages.push({ role: m.role, content: m.content })
+      }
+
+      const stops = params.stopSequences
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+      const body: Record<string, unknown> = {
+        model: 'local',
+        messages: apiMessages,
+        stream: true,
+        temperature: params.temperature,
+        top_k: params.topK,
+        top_p: params.topP,
+        min_p: params.minP,
+        max_tokens: params.maxTokens,
+        repeat_penalty: params.repeatPenalty,
+        presence_penalty: params.presencePenalty,
+        frequency_penalty: params.frequencyPenalty,
+      }
+      if (params.seed !== -1) body.seed = params.seed
+      if (stops.length > 0) body.stop = stops
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: 'local',
-          messages: apiMessages,
-          stream: true,
-          temperature: params.temperature,
-          top_p: params.topP,
-          max_tokens: params.maxTokens,
-          repeat_penalty: params.repeatPenalty,
-        }),
+        body: JSON.stringify(body),
       })
 
       if (!res.ok || !res.body) throw new Error(`Local server returned ${res.status}`)
@@ -126,18 +173,28 @@ export function DashboardChat({ port, apiKey }: Props) {
         <div>
           <h2 className="text-base font-semibold tracking-tight">Run a query</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Hits the local <code className="font-mono">/v1/chat/completions</code> endpoint with
-            streaming. Sampling parameters below apply to the next request — no restart needed.
+            Streams from local <code className="font-mono">/v1/chat/completions</code>. Sampling +
+            behaviour parameters apply to the next request — no restart needed.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setMessages([])}
-          disabled={messages.length === 0 || sending}
-          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
-        >
-          Clear
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setParams(DEFAULT_SAMPLING)}
+            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            title="Reset all sampling parameters to defaults"
+          >
+            Reset params
+          </button>
+          <button
+            type="button"
+            onClick={() => setMessages([])}
+            disabled={messages.length === 0 || sending}
+            className="rounded-md border border-border px-3 py-1 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+          >
+            Clear chat
+          </button>
+        </div>
       </header>
 
       <SamplingControls
@@ -228,7 +285,7 @@ function SamplingControls({
     <div className="border-b border-border bg-muted/20 px-6 py-4">
       <div className="flex items-center justify-between">
         <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-          Sampling — applied to the next request
+          Per-request — applied to the next message
         </p>
         <button
           type="button"
@@ -254,14 +311,30 @@ function SamplingControls({
           label="Max tokens"
           hint="Cap on response length"
           min={32}
-          max={4096}
+          max={8192}
           step={32}
           value={params.maxTokens}
           onChange={(v) => onChange({ ...params, maxTokens: v })}
           format={(v) => String(v)}
         />
-        {showAdvanced && (
-          <>
+      </div>
+
+      {showAdvanced && (
+        <>
+          <p className="mt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Sampling
+          </p>
+          <div className="mt-2 grid gap-4 sm:grid-cols-2">
+            <Slider
+              label="Top-k"
+              hint="Limit candidates to top K. 0 = disabled"
+              min={0}
+              max={200}
+              step={1}
+              value={params.topK}
+              onChange={(v) => onChange({ ...params, topK: v })}
+              format={(v) => String(v)}
+            />
             <Slider
               label="Top-p"
               hint="Nucleus sampling cutoff"
@@ -273,8 +346,18 @@ function SamplingControls({
               format={(v) => v.toFixed(2)}
             />
             <Slider
+              label="Min-p"
+              hint="Min probability relative to the most likely token"
+              min={0}
+              max={1}
+              step={0.01}
+              value={params.minP}
+              onChange={(v) => onChange({ ...params, minP: v })}
+              format={(v) => v.toFixed(2)}
+            />
+            <Slider
               label="Repeat penalty"
-              hint="Higher discourages repetition"
+              hint="Discourages repeated tokens"
               min={1}
               max={1.5}
               step={0.01}
@@ -282,15 +365,73 @@ function SamplingControls({
               onChange={(v) => onChange({ ...params, repeatPenalty: v })}
               format={(v) => v.toFixed(2)}
             />
-          </>
-        )}
-      </div>
+            <Slider
+              label="Presence penalty"
+              hint="Penalises tokens that have appeared at all"
+              min={-2}
+              max={2}
+              step={0.05}
+              value={params.presencePenalty}
+              onChange={(v) => onChange({ ...params, presencePenalty: v })}
+              format={(v) => v.toFixed(2)}
+            />
+            <Slider
+              label="Frequency penalty"
+              hint="Penalises tokens by usage frequency"
+              min={-2}
+              max={2}
+              step={0.05}
+              value={params.frequencyPenalty}
+              onChange={(v) => onChange({ ...params, frequencyPenalty: v })}
+              format={(v) => v.toFixed(2)}
+            />
+          </div>
 
-      {showAdvanced && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Need to change the <b>context window</b>, <b>quantization</b>, or <b>GPU layer count</b>?
-          Those require a server restart — set them in the Optimize tab.
-        </p>
+          <p className="mt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Behaviour
+          </p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <TextField
+              label="Seed"
+              hint="Same seed + prompt = same output. -1 for random"
+              value={String(params.seed)}
+              onChange={(v) => {
+                const n = parseInt(v, 10)
+                onChange({ ...params, seed: Number.isFinite(n) ? n : -1 })
+              }}
+              inputMode="numeric"
+            />
+            <TextField
+              label="Stop sequences"
+              hint="Comma-separated. Streaming halts when any matches"
+              value={params.stopSequences}
+              onChange={(v) => onChange({ ...params, stopSequences: v })}
+              placeholder="</answer>, ###"
+            />
+          </div>
+
+          <div className="mt-3">
+            <label className="block">
+              <span className="text-xs font-medium">System prompt</span>
+              <textarea
+                value={params.systemPrompt}
+                onChange={(e) => onChange({ ...params, systemPrompt: e.target.value })}
+                placeholder="You are a concise technical assistant. Answer in 2-3 sentences."
+                rows={2}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+              />
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                Sent as a <code className="font-mono">role: &quot;system&quot;</code> message before the chat history.
+              </p>
+            </label>
+          </div>
+
+          <p className="mt-4 text-xs text-muted-foreground">
+            Need to change the <b>context window</b>, <b>quantization</b>, <b>GPU layers</b>,{' '}
+            <b>threads</b>, <b>batch size</b>, or <b>flash attention</b>? Those are server-startup
+            params — set them in the ServiceCard above and the service will restart cleanly.
+          </p>
+        </>
       )}
     </div>
   )
@@ -329,6 +470,37 @@ function Slider({
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         className="mt-1 h-1.5 w-full appearance-none rounded-full bg-muted accent-primary"
+      />
+      <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
+    </label>
+  )
+}
+
+function TextField({
+  label,
+  hint,
+  value,
+  onChange,
+  placeholder,
+  inputMode,
+}: {
+  label: string
+  hint: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  inputMode?: 'text' | 'numeric'
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium">{label}</span>
+      <input
+        type="text"
+        inputMode={inputMode}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12px] shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
       />
       <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
     </label>

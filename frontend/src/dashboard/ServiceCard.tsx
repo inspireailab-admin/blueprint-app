@@ -52,6 +52,7 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
   const [actionInFlight, setActionInFlight] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editingBind, setEditingBind] = useState(false)
+  const [showServerSettings, setShowServerSettings] = useState(false)
 
   async function refresh() {
     try {
@@ -330,6 +331,28 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
         <KV k="Restart count" v={String(info.restartCount ?? 0)} mono />
       </dl>
 
+      <ServerSettingsDisclosure
+        config={config}
+        expanded={showServerSettings}
+        onToggle={() => setShowServerSettings((v) => !v)}
+        disabled={actionInFlight !== null}
+        onApply={async (patch) => {
+          if (!config) return
+          await run('reconfigure', async () => {
+            await ApplyServeConfig({
+              modelId: config.modelId,
+              quant: config.quant,
+              bindHost: config.bindHost,
+              port: config.port,
+              ctxSize: config.ctxSize,
+              nGpuLayers: config.nGpuLayers,
+              ...patch,
+            } as main.ServeConfigInput)
+            await RestartManagedServer()
+          })
+        }}
+      />
+
       {error && (
         <div className="border-t border-border/60 px-6 pb-4">
           <ErrorChip msg={error} />
@@ -453,4 +476,319 @@ function formatUptime(startedAtMs: number): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms))
+}
+
+// ─── Server settings disclosure ─────────────────────────────────────────
+//
+// Startup flags that need a service restart to take effect. The form
+// starts in a collapsed state because for the common case the llama.cpp
+// defaults are fine — these are power-user knobs. Clicking Apply
+// writes the new config and restarts the service in one step.
+
+type ServerSettingsPatch = {
+  threads: number
+  batchSize: number
+  uBatchSize: number
+  flashAttn: boolean
+  memoryLock: boolean
+  noMmap: boolean
+  parallelSlots: number
+  contBatching: boolean
+  kvCacheTypeK: string
+  kvCacheTypeV: string
+  logVerbose: boolean
+}
+
+function ServerSettingsDisclosure({
+  config,
+  expanded,
+  disabled,
+  onToggle,
+  onApply,
+}: {
+  config: svcconfig.Config | null
+  expanded: boolean
+  disabled: boolean
+  onToggle: () => void
+  onApply: (patch: ServerSettingsPatch) => Promise<void>
+}) {
+  const initial: ServerSettingsPatch = {
+    threads: config?.threads ?? 0,
+    batchSize: config?.batchSize ?? 0,
+    uBatchSize: config?.uBatchSize ?? 0,
+    flashAttn: config?.flashAttn ?? false,
+    memoryLock: config?.memoryLock ?? false,
+    noMmap: config?.noMmap ?? false,
+    parallelSlots: config?.parallelSlots ?? 0,
+    contBatching: config?.contBatching ?? false,
+    kvCacheTypeK: config?.kvCacheTypeK ?? '',
+    kvCacheTypeV: config?.kvCacheTypeV ?? '',
+    logVerbose: config?.logVerbose ?? false,
+  }
+
+  const [patch, setPatch] = useState<ServerSettingsPatch>(initial)
+
+  // Resync when the config changes underneath us (e.g., after a restart).
+  useEffect(() => {
+    setPatch(initial)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    config?.threads,
+    config?.batchSize,
+    config?.uBatchSize,
+    config?.flashAttn,
+    config?.memoryLock,
+    config?.noMmap,
+    config?.parallelSlots,
+    config?.contBatching,
+    config?.kvCacheTypeK,
+    config?.kvCacheTypeV,
+    config?.logVerbose,
+  ])
+
+  const dirty = JSON.stringify(patch) !== JSON.stringify(initial)
+
+  return (
+    <div className="border-t border-border/60 px-6 py-3">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between text-left text-xs font-medium text-muted-foreground transition hover:text-foreground"
+      >
+        <span className="flex items-center gap-2">
+          <span aria-hidden>{expanded ? '▾' : '▸'}</span>
+          Advanced server settings
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">
+          changing requires service restart
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              CPU / batch
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-3">
+              <NumberField
+                label="Threads"
+                hint="--threads. 0 = auto"
+                value={patch.threads}
+                onChange={(v) => setPatch({ ...patch, threads: v })}
+              />
+              <NumberField
+                label="Batch size"
+                hint="--batch-size. 0 = default (2048)"
+                value={patch.batchSize}
+                onChange={(v) => setPatch({ ...patch, batchSize: v })}
+              />
+              <NumberField
+                label="UBatch size"
+                hint="--ubatch-size. 0 = default (512)"
+                value={patch.uBatchSize}
+                onChange={(v) => setPatch({ ...patch, uBatchSize: v })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Concurrency
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <NumberField
+                label="Parallel slots"
+                hint="--parallel. 0 = 1 slot"
+                value={patch.parallelSlots}
+                onChange={(v) => setPatch({ ...patch, parallelSlots: v })}
+              />
+              <ToggleField
+                label="Continuous batching"
+                hint="--cont-batching. Recommended when parallel > 1"
+                value={patch.contBatching}
+                onChange={(v) => setPatch({ ...patch, contBatching: v })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Memory / GPU
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-3">
+              <ToggleField
+                label="Flash attention"
+                hint="--flash-attn. Faster prefill on supported GPUs"
+                value={patch.flashAttn}
+                onChange={(v) => setPatch({ ...patch, flashAttn: v })}
+              />
+              <ToggleField
+                label="Memory lock"
+                hint="--mlock. Pin weights in RAM"
+                value={patch.memoryLock}
+                onChange={(v) => setPatch({ ...patch, memoryLock: v })}
+              />
+              <ToggleField
+                label="No mmap"
+                hint="--no-mmap. Copies weights, eats more RAM"
+                value={patch.noMmap}
+                onChange={(v) => setPatch({ ...patch, noMmap: v })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              KV cache
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <SelectField
+                label="Key cache type"
+                hint="--cache-type-k. Quantize the K cache to save VRAM"
+                value={patch.kvCacheTypeK}
+                options={KV_CACHE_OPTIONS}
+                onChange={(v) => setPatch({ ...patch, kvCacheTypeK: v })}
+              />
+              <SelectField
+                label="Value cache type"
+                hint="--cache-type-v. Same options"
+                value={patch.kvCacheTypeV}
+                options={KV_CACHE_OPTIONS}
+                onChange={(v) => setPatch({ ...patch, kvCacheTypeV: v })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Logging
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <ToggleField
+                label="Verbose"
+                hint="--verbose. Logs every slot decision"
+                value={patch.logVerbose}
+                onChange={(v) => setPatch({ ...patch, logVerbose: v })}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              disabled={disabled || !dirty}
+              onClick={() => setPatch(initial)}
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+            >
+              Revert
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !dirty}
+              onClick={() => onApply(patch)}
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
+            >
+              {disabled ? 'Applying…' : 'Apply + restart'} →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const KV_CACHE_OPTIONS = [
+  { value: '', label: 'f16 (default)' },
+  { value: 'f16', label: 'f16' },
+  { value: 'q8_0', label: 'q8_0 (½ VRAM)' },
+  { value: 'q4_0', label: 'q4_0 (¼ VRAM, quality cost)' },
+]
+
+function NumberField({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string
+  hint: string
+  value: number
+  onChange: (v: number) => void
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium">{label}</span>
+      <input
+        type="number"
+        min={0}
+        value={value}
+        onChange={(e) => {
+          const n = parseInt(e.target.value, 10)
+          onChange(Number.isFinite(n) ? Math.max(0, n) : 0)
+        }}
+        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12px] shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+      />
+      <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
+    </label>
+  )
+}
+
+function ToggleField({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string
+  hint: string
+  value: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2">
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 cursor-pointer rounded border-border accent-primary"
+      />
+      <span>
+        <span className="block text-xs font-medium">{label}</span>
+        <span className="block text-[10px] text-muted-foreground">{hint}</span>
+      </span>
+    </label>
+  )
+}
+
+function SelectField({
+  label,
+  hint,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  hint: string
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-[12px] shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
+    </label>
+  )
 }
