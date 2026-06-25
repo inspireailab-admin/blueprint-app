@@ -9,7 +9,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -48,18 +47,36 @@ func (s *supervisor) Execute(args []string, r <-chan svc.ChangeRequest, status c
 			status <- c.CurrentStatus
 		case svc.Stop, svc.Shutdown:
 			status <- svc.Status{State: svc.StopPending}
-			cancel()
 
-			// 5s grace, then hard-kill.
+			// CRITICAL: kill the child SYNCHRONOUSLY before we cancel
+			// the worker context or return from Execute.
+			//
+			// The previous order — cancel() first, with a 5-second
+			// Kill scheduled in a goroutine as backup — was racy:
+			// cancel() asks Go's runtime to TerminateProcess via its
+			// own goroutine, and the 5-second backup also fired in a
+			// goroutine. If the worker finished fast and Execute
+			// returned, blueprint-svc.exe exited and ALL of those
+			// goroutines died with it — leaving llama-server orphaned.
+			// Repeating the cycle a few times produced multiple
+			// orphaned llama-servers, one of which was answering on
+			// 8080 with a stale api_key, and chat 401'd against it.
+			//
+			// Process.Kill on Windows is TerminateProcess, which is
+			// synchronous: by the time it returns, the child is gone.
 			if cmd, cc := tracker.snapshot(); cmd != nil && cmd.Process != nil {
-				go func(p *os.Process) {
-					time.Sleep(5 * time.Second)
-					_ = p.Kill()
-				}(cmd.Process)
+				if err := cmd.Process.Kill(); err != nil {
+					log.Printf("supervisor: kill child pid=%d: %v", cmd.Process.Pid, err)
+				}
 				if cc != nil {
 					cc()
 				}
 			}
+
+			// Now cancel the worker ctx — the worker's cmd.Wait()
+			// returned (because the child is dead) and it'll see
+			// ctx.Err() and exit cleanly.
+			cancel()
 
 			select {
 			case <-workerDone:
