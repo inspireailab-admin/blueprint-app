@@ -38,7 +38,7 @@ import { ServiceCard } from './ServiceCard'
 const POLL_MS = 2000
 const HISTORY_LEN = 60
 
-type GoTo = (tab: 'plan' | 'hardware' | 'optimize' | 'deploy' | 'monitor' | 'maintain') => void
+type GoTo = (tab: 'plan' | 'hardware' | 'deploy' | 'monitor' | 'maintain') => void
 
 type ServeConfig = {
   quant: string

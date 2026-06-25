@@ -30,6 +30,11 @@ func main() {
 		Height:    820,
 		MinWidth:  960,
 		MinHeight: 640,
+		// Open maximized — Blueprint is a dashboard app, the user wants
+		// the full system view, not a tiny 1280×820 floating window.
+		// The user can still hit the Restore icon to drop to the
+		// Width × Height defined above.
+		WindowStartState: options.Maximised,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

@@ -331,6 +331,38 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
         <KV k="Restart count" v={String(info.restartCount ?? 0)} mono />
       </dl>
 
+      <OptimizeDisclosure
+        config={config}
+        installed={installed}
+        disabled={actionInFlight !== null}
+        onApply={async (patch) => {
+          if (!config) return
+          await run('optimize', async () => {
+            await ApplyServeConfig({
+              modelId: patch.modelId ?? config.modelId,
+              quant: patch.quant ?? config.quant,
+              bindHost: config.bindHost,
+              port: config.port,
+              ctxSize: patch.ctxSize ?? config.ctxSize,
+              nGpuLayers: patch.nGpuLayers ?? config.nGpuLayers,
+              // Preserve advanced flags unchanged.
+              threads: config.threads,
+              batchSize: config.batchSize,
+              uBatchSize: config.uBatchSize,
+              flashAttn: config.flashAttn,
+              memoryLock: config.memoryLock,
+              noMmap: config.noMmap,
+              parallelSlots: config.parallelSlots,
+              contBatching: config.contBatching,
+              kvCacheTypeK: config.kvCacheTypeK,
+              kvCacheTypeV: config.kvCacheTypeV,
+              logVerbose: config.logVerbose,
+            } as main.ServeConfigInput)
+            await RestartManagedServer()
+          })
+        }}
+      />
+
       <ServerSettingsDisclosure
         config={config}
         expanded={showServerSettings}
@@ -476,6 +508,201 @@ function formatUptime(startedAtMs: number): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms))
+}
+
+// ─── Optimize disclosure ────────────────────────────────────────────────
+//
+// The three knobs that used to live in the Optimize tab — quant,
+// context window, GPU layers — now expand right here in the
+// ServiceCard. Apply writes the new config and restarts the
+// supervisor in one step.
+
+type OptimizePatch = Partial<{
+  modelId: string
+  quant: string
+  ctxSize: number
+  nGpuLayers: number
+}>
+
+function OptimizeDisclosure({
+  config,
+  installed,
+  disabled,
+  onApply,
+}: {
+  config: svcconfig.Config | null
+  installed: main.InstalledModel[] | null
+  disabled: boolean
+  onApply: (patch: OptimizePatch) => Promise<void>
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  // Quants installed for the currently-configured model.
+  const sameModelQuants = (installed ?? [])
+    .filter((m) => m.id === config?.modelId)
+    .map((m) => m.quant)
+  // Other models on disk — let the user swap.
+  const otherModels = (installed ?? []).filter((m) => m.id !== config?.modelId)
+
+  const initial: Required<OptimizePatch> = {
+    modelId: config?.modelId ?? '',
+    quant: config?.quant ?? '',
+    ctxSize: config?.ctxSize ?? 4096,
+    nGpuLayers: config?.nGpuLayers ?? 999,
+  }
+  const [patch, setPatch] = useState<Required<OptimizePatch>>(initial)
+  useEffect(() => {
+    setPatch(initial)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config?.modelId, config?.quant, config?.ctxSize, config?.nGpuLayers])
+
+  const dirty =
+    patch.modelId !== initial.modelId ||
+    patch.quant !== initial.quant ||
+    patch.ctxSize !== initial.ctxSize ||
+    patch.nGpuLayers !== initial.nGpuLayers
+
+  return (
+    <div className="border-t border-border/60 px-6 py-3">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between text-left text-xs font-medium text-muted-foreground transition hover:text-foreground"
+      >
+        <span className="flex items-center gap-2">
+          <span aria-hidden>{expanded ? '▾' : '▸'}</span>
+          Optimize — quant, context, GPU offload
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">
+          changes restart the supervisor
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Model + quantization
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <SelectField
+                label="Model"
+                hint="Models on disk. Pick one to swap what's served."
+                value={patch.modelId}
+                options={[
+                  ...(config
+                    ? [{ value: config.modelId, label: config.modelId }]
+                    : []),
+                  ...otherModels.map((m) => ({ value: m.id, label: m.id })),
+                ]}
+                onChange={(v) => {
+                  // When switching model, snap quant to the first
+                  // available quant for that model.
+                  const firstQuant =
+                    (installed ?? []).find((m) => m.id === v)?.quant ??
+                    patch.quant
+                  setPatch({ ...patch, modelId: v, quant: firstQuant })
+                }}
+              />
+              <SelectField
+                label="Quantization"
+                hint="Lower = less VRAM, slightly lower quality"
+                value={patch.quant}
+                options={(patch.modelId === config?.modelId
+                  ? sameModelQuants
+                  : (installed ?? [])
+                      .filter((m) => m.id === patch.modelId)
+                      .map((m) => m.quant)
+                ).map((q) => ({ value: q, label: q.toUpperCase() }))}
+                onChange={(v) => setPatch({ ...patch, quant: v })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Context window
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <NumberField
+                label="Tokens"
+                hint="--ctx-size. Bigger = more VRAM for KV cache."
+                value={patch.ctxSize}
+                onChange={(v) => setPatch({ ...patch, ctxSize: v })}
+              />
+              <div className="flex flex-wrap items-end gap-1.5">
+                {[2048, 4096, 8192, 16_384, 32_768].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setPatch({ ...patch, ctxSize: preset })}
+                    className={[
+                      'rounded-md border px-2 py-1 font-mono text-[11px] transition',
+                      patch.ctxSize === preset
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background hover:bg-muted',
+                    ].join(' ')}
+                  >
+                    {preset >= 1024 ? `${preset / 1024}K` : preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              GPU offload
+            </p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <NumberField
+                label="GPU layers"
+                hint="--n-gpu-layers. 999 = offload all that fit"
+                value={patch.nGpuLayers}
+                onChange={(v) => setPatch({ ...patch, nGpuLayers: v })}
+              />
+              <div className="flex flex-wrap items-end gap-1.5">
+                {[0, 16, 32, 64, 999].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setPatch({ ...patch, nGpuLayers: preset })}
+                    className={[
+                      'rounded-md border px-2 py-1 font-mono text-[11px] transition',
+                      patch.nGpuLayers === preset
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background hover:bg-muted',
+                    ].join(' ')}
+                  >
+                    {preset === 0 ? 'CPU' : preset === 999 ? 'All' : preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              disabled={disabled || !dirty}
+              onClick={() => setPatch(initial)}
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+            >
+              Revert
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !dirty}
+              onClick={() => onApply(patch)}
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
+            >
+              {disabled ? 'Applying…' : 'Apply + restart'} →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── Server settings disclosure ─────────────────────────────────────────
