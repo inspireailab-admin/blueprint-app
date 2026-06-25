@@ -1,214 +1,176 @@
-//go:build windows
-
-// Supervisor — the bit that actually keeps llama-server up.
+// Supervisor — cross-platform core. The actual loop that reads
+// %ProgramData%\Blueprint\service-config.json (or its Linux equivalent
+// under /etc/blueprint/), spawns llama-server, supervises it with
+// restart-on-crash + exponential backoff, and writes service-status.json
+// so the desktop app can render state without an IPC channel.
 //
-// Lifecycle:
+// The platform-specific bits are thin wrappers:
+//   - supervisor_windows.go drives this via svc.Handler.Execute().
+//   - main_linux.go drives this with a signal handler in main().
 //
-//  1. SCM calls Execute(); we send StartPending, then start a worker.
-//  2. Worker loop reads the on-disk config, spawns llama-server, waits.
-//  3. If the child exits with a non-zero code or crashes, we wait an
-//     exponentially-backed-off interval and respawn — up to MaxRestarts
-//     consecutive failures, then we give up and log it.
-//  4. When SCM sends Stop, we cancel, kill the child, mark Status =
-//     "stopped", and return.
-//
-// Status writes go to %ProgramData%\Blueprint\service-status.json so
-// the desktop app can render the phase + PID + restart count without
-// any IPC.
+// In both cases the bridge just creates a context, calls runSupervisor,
+// cancels on shutdown.
 
 package main
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
-
-	"golang.org/x/sys/windows/svc"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
 )
 
-type supervisor struct{}
+// runSupervisor is the actual loop. Returns when ctx is cancelled.
+//
+// childTracker is optional — when non-nil, every spawned child registers
+// itself so the platform shutdown path can hard-kill on grace timeout.
+type runSupervisorOpts struct {
+	onChildStart func(cmd *exec.Cmd, cancel context.CancelFunc)
+	onChildEnd   func()
+}
 
-// Execute is the svc.Handler entry point.
-func (s *supervisor) Execute(args []string, r <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
-	const accepted = svc.AcceptStop | svc.AcceptShutdown
+func runSupervisor(ctx context.Context, opts runSupervisorOpts) {
+	writeStatus(svcconfig.Status{Phase: "idle"})
 
-	status <- svc.Status{State: svc.StartPending}
+	var restartCount int
+	backoff := time.Second
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	for {
+		if ctx.Err() != nil {
+			return
+		}
 
-	var (
-		childMu     sync.Mutex
-		childCmd    *exec.Cmd
-		childCancel context.CancelFunc
-	)
-
-	// Worker — supervises one child at a time. Restart-on-crash with
-	// exponential backoff capped at 30s.
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-
-		writeStatus(svcconfig.Status{Phase: "idle"})
-
-		var restartCount int
-		backoff := time.Second
-
-		for {
-			if ctx.Err() != nil {
+		cfg, err := svcconfig.ReadConfig()
+		if err != nil {
+			log.Printf("read config: %v", err)
+			writeStatus(svcconfig.Status{Phase: "idle", LastError: err.Error()})
+			if !sleepCtx(ctx, 5*time.Second) {
 				return
 			}
-
-			cfg, err := svcconfig.ReadConfig()
-			if err != nil {
-				log.Printf("read config: %v", err)
-				writeStatus(svcconfig.Status{Phase: "idle", LastError: err.Error()})
-				if !sleepCtx(ctx, 5*time.Second) {
-					return
-				}
-				continue
+			continue
+		}
+		if cfg == nil || cfg.LlamaServerBin == "" || cfg.ModelPath == "" {
+			// No config or incomplete — sit idle and poll for it.
+			writeStatus(svcconfig.Status{Phase: "idle"})
+			if !sleepCtx(ctx, 5*time.Second) {
+				return
 			}
-			if cfg == nil || cfg.LlamaServerBin == "" || cfg.ModelPath == "" {
-				// No config or incomplete — sit idle and poll for it.
-				writeStatus(svcconfig.Status{Phase: "idle"})
-				if !sleepCtx(ctx, 5*time.Second) {
-					return
-				}
-				continue
+			continue
+		}
+
+		logFile, err := openLogFile()
+		if err != nil {
+			writeStatus(svcconfig.Status{Phase: "idle", LastError: "open log: " + err.Error()})
+			if !sleepCtx(ctx, 5*time.Second) {
+				return
 			}
+			continue
+		}
 
-			// Spawn the child.
-			logFile, err := openLogFile()
-			if err != nil {
-				writeStatus(svcconfig.Status{Phase: "idle", LastError: "open log: " + err.Error()})
-				if !sleepCtx(ctx, 5*time.Second) {
-					return
-				}
-				continue
-			}
+		childCtx, cc := context.WithCancel(ctx)
+		cmd := exec.CommandContext(childCtx, cfg.LlamaServerBin, llamaArgs(cfg)...)
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		hideConsole(cmd)
 
-			childCtx, cc := context.WithCancel(ctx)
-			cmd := exec.CommandContext(childCtx, cfg.LlamaServerBin, llamaArgs(cfg)...)
-			cmd.Stdout = logFile
-			cmd.Stderr = logFile
-			hideConsole(cmd)
-
-			startedAt := time.Now().UnixMilli()
-			if err := cmd.Start(); err != nil {
-				logFile.Close()
-				cc()
-				writeStatus(svcconfig.Status{Phase: "crashed", LastError: "start: " + err.Error(), RestartCount: restartCount})
-				if !sleepCtx(ctx, backoff) {
-					return
-				}
-				backoff = nextBackoff(backoff)
-				restartCount++
-				if cfg.MaxRestarts > 0 && restartCount >= cfg.MaxRestarts {
-					writeStatus(svcconfig.Status{Phase: "crashed", LastError: "max restarts exceeded", RestartCount: restartCount})
-					return
-				}
-				continue
-			}
-
-			pid := cmd.Process.Pid
-			writeStatus(svcconfig.Status{
-				Phase: "running", ModelID: cfg.ModelID, Quant: cfg.Quant,
-				PID: pid, Port: cfg.Port, BindHost: cfg.BindHost,
-				StartedAtMs: startedAt, RestartCount: restartCount,
-			})
-			log.Printf("supervisor: spawned llama-server pid=%d model=%s quant=%s", pid, cfg.ModelID, cfg.Quant)
-
-			childMu.Lock()
-			childCmd = cmd
-			childCancel = cc
-			childMu.Unlock()
-
-			err = cmd.Wait()
+		startedAt := time.Now().UnixMilli()
+		if err := cmd.Start(); err != nil {
 			logFile.Close()
-
-			childMu.Lock()
-			childCmd = nil
-			childCancel = nil
-			childMu.Unlock()
-
-			if ctx.Err() != nil {
-				// Service stop requested — get out clean.
-				return
-			}
-
-			// Survived a successful run for >= 60s? Reset backoff.
-			if time.Now().UnixMilli()-startedAt > 60_000 {
-				backoff = time.Second
-				restartCount = 0
-			}
-			restartCount++
-
-			lastErr := ""
-			if err != nil {
-				lastErr = err.Error()
-			}
-			writeStatus(svcconfig.Status{
-				Phase: "crashed", ModelID: cfg.ModelID, Quant: cfg.Quant,
-				RestartCount: restartCount, LastError: lastErr,
-			})
-			log.Printf("supervisor: child exited (%v), restart in %s (count=%d)", err, backoff, restartCount)
-
-			if cfg.MaxRestarts > 0 && restartCount >= cfg.MaxRestarts {
-				log.Printf("supervisor: max restarts (%d) reached, giving up", cfg.MaxRestarts)
-				return
-			}
+			cc()
+			writeStatus(svcconfig.Status{Phase: "crashed", LastError: "start: " + err.Error(), RestartCount: restartCount})
 			if !sleepCtx(ctx, backoff) {
 				return
 			}
 			backoff = nextBackoff(backoff)
-		}
-	}()
-
-	status <- svc.Status{State: svc.Running, Accepts: accepted}
-
-	// SCM command loop.
-	for c := range r {
-		switch c.Cmd {
-		case svc.Interrogate:
-			status <- c.CurrentStatus
-		case svc.Stop, svc.Shutdown:
-			status <- svc.Status{State: svc.StopPending}
-			cancel()
-
-			// Hard-kill the child after a 5s grace period.
-			childMu.Lock()
-			if childCmd != nil && childCmd.Process != nil {
-				go func(p *os.Process) {
-					time.Sleep(5 * time.Second)
-					_ = p.Kill()
-				}(childCmd.Process)
-				if childCancel != nil {
-					childCancel()
-				}
+			restartCount++
+			if cfg.MaxRestarts > 0 && restartCount >= cfg.MaxRestarts {
+				writeStatus(svcconfig.Status{Phase: "crashed", LastError: "max restarts exceeded", RestartCount: restartCount})
+				return
 			}
-			childMu.Unlock()
-
-			// Wait for worker.
-			select {
-			case <-workerDone:
-			case <-time.After(10 * time.Second):
-				log.Printf("supervisor: worker didn't exit in 10s, force-returning")
-			}
-
-			writeStatus(svcconfig.Status{Phase: "stopped"})
-			return false, 0
+			continue
 		}
+
+		pid := cmd.Process.Pid
+		writeStatus(svcconfig.Status{
+			Phase: "running", ModelID: cfg.ModelID, Quant: cfg.Quant,
+			PID: pid, Port: cfg.Port, BindHost: cfg.BindHost,
+			StartedAtMs: startedAt, RestartCount: restartCount,
+		})
+		log.Printf("supervisor: spawned llama-server pid=%d model=%s quant=%s", pid, cfg.ModelID, cfg.Quant)
+
+		if opts.onChildStart != nil {
+			opts.onChildStart(cmd, cc)
+		}
+
+		err = cmd.Wait()
+		logFile.Close()
+
+		if opts.onChildEnd != nil {
+			opts.onChildEnd()
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		if time.Now().UnixMilli()-startedAt > 60_000 {
+			backoff = time.Second
+			restartCount = 0
+		}
+		restartCount++
+
+		lastErr := ""
+		if err != nil {
+			lastErr = err.Error()
+		}
+		writeStatus(svcconfig.Status{
+			Phase: "crashed", ModelID: cfg.ModelID, Quant: cfg.Quant,
+			RestartCount: restartCount, LastError: lastErr,
+		})
+		log.Printf("supervisor: child exited (%v), restart in %s (count=%d)", err, backoff, restartCount)
+
+		if cfg.MaxRestarts > 0 && restartCount >= cfg.MaxRestarts {
+			log.Printf("supervisor: max restarts (%d) reached, giving up", cfg.MaxRestarts)
+			return
+		}
+		if !sleepCtx(ctx, backoff) {
+			return
+		}
+		backoff = nextBackoff(backoff)
 	}
-	return false, 0
+}
+
+// childTracker is a tiny helper shared by the platform bridges so they
+// can hard-kill the running child on shutdown grace expiry.
+type childTracker struct {
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+}
+
+func (t *childTracker) set(cmd *exec.Cmd, cancel context.CancelFunc) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cmd = cmd
+	t.cancel = cancel
+}
+
+func (t *childTracker) clear() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cmd = nil
+	t.cancel = nil
+}
+
+func (t *childTracker) snapshot() (*exec.Cmd, context.CancelFunc) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.cmd, t.cancel
 }
 
 func llamaArgs(cfg *svcconfig.Config) []string {
@@ -228,12 +190,20 @@ func llamaArgs(cfg *svcconfig.Config) []string {
 	return args
 }
 
-func openLogFile() (io.WriteCloser, error) {
+func openLogFile() (writeCloser, error) {
 	path, err := svcconfig.LogPath()
 	if err != nil {
 		return nil, err
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+}
+
+// writeCloser is just io.WriteCloser; the alias keeps the dependency
+// graph of this file empty of the io package since openLogFile is the
+// only caller and *os.File satisfies the interface.
+type writeCloser interface {
+	Write(p []byte) (int, error)
+	Close() error
 }
 
 func writeStatus(s svcconfig.Status) {
@@ -257,16 +227,3 @@ func nextBackoff(d time.Duration) time.Duration {
 	}
 	return next
 }
-
-// hideConsole hides the child's console window so spawning llama-server
-// doesn't briefly flash a CMD.
-func hideConsole(cmd *exec.Cmd) {
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.HideWindow = true
-	cmd.SysProcAttr.CreationFlags |= 0x08000000 // CREATE_NO_WINDOW
-}
-
-// Silence unused-import warnings when extending.
-var _ = fmt.Sprintf

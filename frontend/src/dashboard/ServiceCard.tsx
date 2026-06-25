@@ -1,26 +1,25 @@
-// ServiceCard — top-of-dashboard surface for the Windows Service
-// that supervises llama-server.
+// ServiceCard — top-of-dashboard surface for the Blueprint LLM Service.
 //
-// Three primary states this card handles:
+// The service is NOT optional. It ships with the Blueprint installer
+// and is the only path for managing llama-server. This card just
+// reflects whatever state the SCM (Windows) or systemd (Linux) is in.
 //
-//   1. blueprint-svc.exe missing on disk — installer didn't ship it.
-//      Show a clear error pointing at the build.ps1 + the expected path.
-//   2. Service binary present but not installed with SCM.
-//      Show the "Install service" CTA with what it'll do + UAC warning.
-//   3. Service installed.
-//      Show current SCM + supervisor state + start/stop/uninstall +
-//      bind-address config + the configured model.
+// Two primary states:
+//
+//   1. Service not detected — installer didn't run, or it failed.
+//      Show a clear "reinstall Blueprint" message plus a developer
+//      CLI hint for the unusual case of building from source.
+//   2. Service installed — show SCM/systemd state + supervisor phase +
+//      bind toggle + start / stop / restart controls.
 
 import { useEffect, useState } from 'react'
 import {
   ApplyServeConfig,
   CurrentServeConfig,
-  InstallService,
   RestartManagedServer,
   ServiceInfo,
   StartManagedServer,
   StopManagedServer,
-  UninstallService,
 } from '../../wailsjs/go/main/App'
 import type { main, svcconfig } from '../../wailsjs/go/models'
 
@@ -74,65 +73,32 @@ export function ServiceCard({}: Props) {
     )
   }
 
-  // State 1 — binary missing.
-  if (!info.svcBinPresent) {
+  // State 1 — service not detected.
+  // The service ships with the Blueprint installer, so this state
+  // means something went wrong: the installer didn't run, it failed
+  // partway through, or someone uninstalled the service manually.
+  if (!info.svcBinPresent || !info.installed) {
     return (
       <section className="overflow-hidden rounded-2xl border border-chart-5/40 bg-chart-5/5 shadow-sm">
         <div className="px-6 py-5">
-          <p className="eyebrow">Service binary missing</p>
-          <p className="mt-1 text-base font-semibold tracking-tight">
-            <code className="font-mono">blueprint-svc.exe</code> wasn’t found next to{' '}
-            <code className="font-mono">blueprint.exe</code>.
-          </p>
-          <p className="mt-2 max-w-prose text-xs text-muted-foreground">
-            Build it with <code className="font-mono">.\build.ps1 -SvcOnly</code> from the repo root,
-            then click <em>Install service</em> here.
-          </p>
-          <p className="mt-3 font-mono text-[11px] text-muted-foreground">
-            Expected at: <span className="text-foreground">{info.svcBinExpected}</span>
-          </p>
-        </div>
-      </section>
-    )
-  }
-
-  // State 2 — not installed yet.
-  if (!info.installed) {
-    return (
-      <section className="overflow-hidden rounded-2xl border border-primary/40 bg-primary/5 shadow-sm">
-        <div className="px-6 py-5">
-          <p className="eyebrow">Service not installed</p>
+          <p className="eyebrow">Service not detected</p>
           <p className="mt-1 text-lg font-semibold tracking-tight">
-            Install the Blueprint LLM Service for 100% uptime
+            Blueprint LLM Service isn’t installed
           </p>
           <p className="mt-2 max-w-prose text-xs text-muted-foreground">
-            A Windows Service supervises llama-server so it stays up across reboots, app exits,
-            and crashes. Restart-on-crash with exponential backoff is built in. You can keep
-            running llama-server directly from the Deploy tab as before — but the service is the
-            recommended path for anything beyond a one-off session.
+            The service supervises llama-server with auto-restart and survives reboots — it’s
+            the only path Blueprint uses to manage models. It normally ships with the Blueprint
+            installer; if you see this, the installer didn’t complete or the service was removed.
           </p>
-          <ul className="mt-3 space-y-1 text-xs text-foreground/80">
-            <Li>Auto-start at boot, no logged-in user required</Li>
-            <Li>Supervises the child — crashes are restarted automatically</Li>
-            <Li>Config + logs in <code className="font-mono">%ProgramData%\Blueprint</code></Li>
-            <Li>Will ask for admin rights (UAC) to register with SCM</Li>
-          </ul>
-
-          {error && <ErrorChip msg={error} />}
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={actionInFlight === 'install'}
-              onClick={() => run('install', InstallService)}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
-            >
-              {actionInFlight === 'install' ? 'Waiting on UAC…' : 'Install service'} →
-            </button>
-            <p className="self-center text-[11px] text-muted-foreground">
-              Pops a UAC prompt. Accept to register the service with Windows.
-            </p>
-          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Fix it by re-running the Blueprint installer. Building from source? Run the install
+            command from an admin shell:
+          </p>
+          <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-[11px]">
+            {info.svcBinPresent
+              ? `${info.svcBinExpected} install`
+              : `.\\build.ps1 -SvcOnly\n${info.svcBinExpected} install`}
+          </pre>
         </div>
       </section>
     )
@@ -187,17 +153,6 @@ export function ServiceCard({}: Props) {
             className="rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition hover:bg-muted disabled:opacity-60"
           >
             Restart
-          </button>
-          <button
-            type="button"
-            disabled={actionInFlight !== null}
-            onClick={() => {
-              if (!confirm('Uninstall the Blueprint LLM Service? This stops llama-server and removes the service from Windows.')) return
-              void run('uninstall', UninstallService)
-            }}
-            className="rounded-md border border-destructive/40 px-3 py-2 text-sm font-medium text-destructive transition hover:bg-destructive/5 disabled:opacity-60"
-          >
-            Uninstall
           </button>
         </div>
       </header>
@@ -332,15 +287,6 @@ function KV({ k, v, mono }: { k: string; v: React.ReactNode; mono?: boolean }) {
         {v}
       </span>
     </div>
-  )
-}
-
-function Li({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="flex items-start gap-2">
-      <span className="mt-1 inline-flex h-1 w-1 shrink-0 rounded-full bg-foreground/50" />
-      <span>{children}</span>
-    </li>
   )
 }
 

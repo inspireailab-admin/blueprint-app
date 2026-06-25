@@ -110,27 +110,34 @@ type Status struct {
 	UpdatedAt int64 `json:"updatedAt"`
 }
 
-// DataDir is %ProgramData%\Blueprint on Windows; ~/.blueprint elsewhere.
-// Both app and service resolve to the same path because we don't
-// derive it from %USERPROFILE% — that would differ between the user
-// and LocalSystem (the service account).
+// DataDir is the shared directory between the desktop app (running as
+// the interactive user) and the service (running as LocalSystem on
+// Windows, root via systemd on Linux). Same path resolves on both
+// sides so the JSON files round-trip cleanly.
+//
+//	BLUEPRINT_SERVICE_DATA  (env override)
+//	Windows: %PROGRAMDATA%\Blueprint           (typically C:\ProgramData\Blueprint)
+//	Linux:   /var/lib/blueprint                (must be world-readable)
+//	macOS:   ~/.blueprint/service              (single-user only; no service on macOS yet)
 func DataDir() (string, error) {
 	if env := os.Getenv("BLUEPRINT_SERVICE_DATA"); env != "" {
 		return env, nil
 	}
-	if runtime.GOOS == "windows" {
-		// Prefer PROGRAMDATA — readable+writable by both LocalSystem
-		// (the service) and the interactive user (the app).
+	switch runtime.GOOS {
+	case "windows":
 		if pd := os.Getenv("PROGRAMDATA"); pd != "" {
 			return filepath.Join(pd, "Blueprint"), nil
 		}
 		return `C:\ProgramData\Blueprint`, nil
+	case "linux":
+		return "/var/lib/blueprint", nil
+	default:
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".blueprint", "service"), nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".blueprint", "service"), nil
 }
 
 // ConfigPath returns the absolute path of service-config.json.
