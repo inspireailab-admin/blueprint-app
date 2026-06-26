@@ -6,6 +6,7 @@ require (
 	github.com/inspireailab-admin/blueprint-cli v0.2.0
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/wailsapp/wails/v2 v2.12.0
+	golang.org/x/crypto v0.33.0
 	golang.org/x/sys v0.41.0
 )
 
@@ -40,7 +41,6 @@ require (
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 )
