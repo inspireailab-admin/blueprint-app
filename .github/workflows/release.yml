@@ -30,19 +30,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Wails uses wails.json's "name" (blueprint-app) for the .app
+          # bundle name and the NSIS installer name; "outputfilename"
+          # (blueprint) for the raw binary inside.
           - os: windows-latest
             target: windows/amd64
             wails_flags: '-nsis'
-            artifact_glob: 'build/bin/blueprint-amd64-installer.exe'
+            artifact_glob: 'build/bin/blueprint-app-amd64-installer.exe'
             artifact_name: blueprint-windows-amd64-installer.exe
           - os: macos-latest
             target: darwin/universal
             wails_flags: ''
-            artifact_glob: 'build/bin/blueprint.app'
+            macos_app_bundle: 'blueprint-app.app'
             artifact_name: blueprint-macos-universal.app.zip
+          # Ubuntu 24 dropped libwebkit2gtk-4.0; we install -4.1 below
+          # and tell Wails to use the 4.1 bindings via build tag.
           - os: ubuntu-latest
             target: linux/amd64
-            wails_flags: ''
+            wails_flags: '-tags webkit2_41'
             artifact_glob: 'build/bin/blueprint'
             artifact_name: blueprint-linux-amd64
 
@@ -137,7 +142,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           cd build/bin
-          ditto -c -k --sequesterRsrc --keepParent blueprint.app ../../${{ matrix.artifact_name }}
+          ditto -c -k --sequesterRsrc --keepParent ${{ matrix.macos_app_bundle }} ../../${{ matrix.artifact_name }}
           mv ../../${{ matrix.artifact_name }} ${{ matrix.artifact_name }}
 
       - name: Notarize macOS (when Apple ID available)
