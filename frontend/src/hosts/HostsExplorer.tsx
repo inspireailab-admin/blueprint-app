@@ -6,6 +6,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   AddHost,
+  ConnectHost,
+  DisconnectHost,
+  IsHostConnected,
   ListHosts,
   PushInstallHost,
   RemoveHost,
@@ -36,6 +39,12 @@ type InstallState =
   | { kind: 'installing'; lines: InstallLine[] }
   | { kind: 'done'; lines: InstallLine[]; result: main.PushInstallResult }
 
+type ConnState =
+  | { kind: 'disconnected' }
+  | { kind: 'connecting' }
+  | { kind: 'connected'; svcVersion?: string }
+  | { kind: 'failed'; error: string }
+
 export function HostsExplorer() {
   const [items, setItems] = useState<hostsModel.Host[]>([])
   const [loading, setLoading] = useState(true)
@@ -45,6 +54,7 @@ export function HostsExplorer() {
   const [busy, setBusy] = useState(false)
   const [probes, setProbes] = useState<Record<string, ProbeState>>({})
   const [installs, setInstalls] = useState<Record<string, InstallState>>({})
+  const [conns, setConns] = useState<Record<string, ConnState>>({})
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -183,12 +193,85 @@ export function HostsExplorer() {
   async function remove(id: string, label: string) {
     if (!confirm(`Remove "${label}" from the host registry?`)) return
     try {
+      await DisconnectHost(id) // best-effort
+    } catch {
+      // ignore — host might not have been connected
+    }
+    try {
       await RemoveHost(id)
+      setConns((p) => {
+        const { [id]: _, ...rest } = p
+        return rest
+      })
       await refresh()
     } catch (err) {
       console.error('RemoveHost failed:', err)
     }
   }
+
+  async function connect(id: string) {
+    setConns((p) => ({ ...p, [id]: { kind: 'connecting' } }))
+    try {
+      const r = await ConnectHost(id)
+      if (r.connected) {
+        setConns((p) => ({
+          ...p,
+          [id]: {
+            kind: 'connected',
+            svcVersion: r.health?.version as string | undefined,
+          },
+        }))
+        void refresh()
+      } else {
+        setConns((p) => ({
+          ...p,
+          [id]: { kind: 'failed', error: r.error || 'unknown error' },
+        }))
+      }
+    } catch (err) {
+      setConns((p) => ({
+        ...p,
+        [id]: {
+          kind: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        },
+      }))
+    }
+  }
+
+  async function disconnect(id: string) {
+    try {
+      await DisconnectHost(id)
+    } catch {
+      // best-effort
+    }
+    setConns((p) => ({ ...p, [id]: { kind: 'disconnected' } }))
+  }
+
+  // On mount, ask the Go side which hosts (if any) are already
+  // connected — there are none today but this gracefully handles
+  // future "connect on app start" behaviour.
+  useEffect(() => {
+    if (items.length === 0) return
+    let alive = true
+    void (async () => {
+      const next: Record<string, ConnState> = {}
+      for (const h of items) {
+        try {
+          const isConnected = await IsHostConnected(h.id)
+          if (isConnected) next[h.id] = { kind: 'connected' }
+        } catch {
+          // ignore
+        }
+      }
+      if (alive && Object.keys(next).length > 0) {
+        setConns((p) => ({ ...next, ...p }))
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [items])
 
   return (
     <div className="space-y-4">
@@ -301,9 +384,12 @@ export function HostsExplorer() {
                 host={h}
                 probe={probes[h.id] ?? { kind: 'idle' }}
                 install={installs[h.id] ?? { kind: 'idle' }}
+                conn={conns[h.id] ?? { kind: 'disconnected' }}
                 onRemove={() => void remove(h.id, h.label)}
                 onTest={() => void testConnect(h.id)}
                 onInstall={() => void pushInstall(h.id, h.label)}
+                onConnect={() => void connect(h.id)}
+                onDisconnect={() => void disconnect(h.id)}
               />
             ))}
           </ul>
@@ -317,16 +403,22 @@ function HostRow({
   host,
   probe,
   install,
+  conn,
   onRemove,
   onTest,
   onInstall,
+  onConnect,
+  onDisconnect,
 }: {
   host: hostsModel.Host
   probe: ProbeState
   install: InstallState
+  conn: ConnState
   onRemove: () => void
   onTest: () => void
   onInstall: () => void
+  onConnect: () => void
+  onDisconnect: () => void
 }) {
   return (
     <li className="px-6 py-4">
@@ -335,6 +427,7 @@ function HostRow({
           <p className="truncate text-sm font-semibold tracking-tight">
             {host.label}
             <RoleBadge role={host.role as Role} />
+            <ConnPill conn={conn} />
           </p>
           <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
             {host.user}@{host.host}
@@ -361,10 +454,28 @@ function HostRow({
             type="button"
             onClick={onInstall}
             disabled={install.kind === 'installing'}
-            className="rounded-md border border-primary/40 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition hover:bg-primary/10 disabled:opacity-50"
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
           >
             {install.kind === 'installing' ? 'Installing…' : 'Push-install'}
           </button>
+          {conn.kind === 'connected' ? (
+            <button
+              type="button"
+              onClick={onDisconnect}
+              className="rounded-md border border-chart-4/40 bg-chart-4/10 px-3 py-1.5 text-xs font-medium text-chart-4 transition hover:bg-chart-4/15"
+            >
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onConnect}
+              disabled={conn.kind === 'connecting'}
+              className="rounded-md border border-primary/40 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition hover:bg-primary/10 disabled:opacity-50"
+            >
+              {conn.kind === 'connecting' ? 'Connecting…' : 'Connect'}
+            </button>
+          )}
           <button
             type="button"
             onClick={onRemove}
@@ -379,8 +490,31 @@ function HostRow({
       {(install.kind === 'installing' || install.kind === 'done') && (
         <InstallPanel install={install} />
       )}
+      {conn.kind === 'failed' && (
+        <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs">
+          <p className="font-semibold text-destructive">Could not connect</p>
+          <p className="mt-1 font-mono text-[11px] text-destructive/80">
+            {conn.error}
+          </p>
+        </div>
+      )}
     </li>
   )
+}
+
+function ConnPill({ conn }: { conn: ConnState }) {
+  if (conn.kind === 'connected') {
+    return (
+      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-chart-4/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-chart-4">
+        <span className="h-1.5 w-1.5 rounded-full bg-chart-4" />
+        Connected
+        {conn.svcVersion && (
+          <span className="ml-1 opacity-70">v{conn.svcVersion}</span>
+        )}
+      </span>
+    )
+  }
+  return null
 }
 
 function ProbePanel({ probe }: { probe: main.HostProbeResult }) {
