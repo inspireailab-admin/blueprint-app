@@ -11,6 +11,7 @@
 package svcclient
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -153,9 +154,6 @@ type ChatMessage struct {
 // ChatCompletion sends a non-streaming chat request to the supervised
 // llama-server via the svc's /llama proxy. Returns the assistant's
 // reply text + the raw response for callers that want token counts.
-//
-// Streaming variant will land in a follow-up once the GUI grows a
-// way to render incrementally over the SSH tunnel.
 func (c *Client) ChatCompletion(
 	ctx context.Context,
 	model string,
@@ -186,6 +184,100 @@ func (c *Client) ChatCompletion(
 	msg, _ := c0["message"].(map[string]any)
 	content, _ := msg["content"].(string)
 	return content, raw, nil
+}
+
+// ChatCompletionStream is the streaming sibling of ChatCompletion.
+// Invokes onDelta for every token-delta the server emits. Returns
+// the accumulated content on completion. The proxy chain (GUI -> SSH
+// tunnel -> svc /llama -> llama-server) propagates SSE just fine —
+// httputil.ReverseProxy with FlushInterval=100ms keeps chunks flowing.
+//
+// onDelta is called from the same goroutine as the caller; it doesn't
+// need to be thread-safe but should be cheap.
+func (c *Client) ChatCompletionStream(
+	ctx context.Context,
+	model string,
+	messages []ChatMessage,
+	maxTokens int,
+	temperature float64,
+	extra map[string]any,
+	onDelta func(delta string),
+) (string, error) {
+	if model == "" {
+		model = "local"
+	}
+	payload := map[string]any{
+		"model":       model,
+		"messages":    messages,
+		"max_tokens":  maxTokens,
+		"temperature": temperature,
+		"stream":      true,
+	}
+	for k, v := range extra {
+		payload[k] = v
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"http://blueprint-svc/llama/v1/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	// Use a streaming-friendly client — the default 30s Timeout would
+	// kill a long generation mid-stream.
+	streamingClient := &http.Client{Transport: c.http.Transport}
+	resp, err := streamingClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("svc HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var content strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	// SSE chunks can be larger than the default 64 KB buffer.
+	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		for _, ch := range chunk.Choices {
+			if ch.Delta.Content != "" {
+				content.WriteString(ch.Delta.Content)
+				onDelta(ch.Delta.Content)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil && err != ctx.Err() {
+		return content.String(), err
+	}
+	return content.String(), nil
 }
 
 // ─── Plumbing ───────────────────────────────────────────────────────

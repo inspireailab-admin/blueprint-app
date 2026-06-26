@@ -30,8 +30,7 @@ import {
   StopMonitoring,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import type { svcconfig } from '../../wailsjs/go/models'
-import { main } from '../../wailsjs/go/models'
+import type { main, svcconfig } from '../../wailsjs/go/models'
 import { DashboardChat } from './DashboardChat'
 import { PromptCacheCard } from './PromptCacheCard'
 import { PythonRuntimeCard } from './PythonRuntimeCard'
@@ -43,7 +42,7 @@ import { CalibrateExplorer } from '../calibrate/CalibrateExplorer'
 import { MaintainExplorer } from '../maintain/MaintainExplorer'
 import { HostsExplorer } from '../hosts/HostsExplorer'
 import {
-  RemoteChat,
+  RemoteChatStream,
   RemoteHostInfo,
   RemoteHostModels,
   RemoteHostServe,
@@ -993,36 +992,126 @@ function NotPortedYet({ message }: { message: string }) {
 
 type ChatMsg = { role: 'user' | 'assistant'; content: string }
 
+type SamplingParams = {
+  temperature: number
+  maxTokens: number
+  topK: number
+  topP: number
+  minP: number
+  repeatPenalty: number
+  presencePenalty: number
+  frequencyPenalty: number
+  seed: number
+  stopSequences: string
+  systemPrompt: string
+}
+
+const DEFAULT_SAMPLING: SamplingParams = {
+  temperature: 0.7,
+  maxTokens: 512,
+  topK: 40,
+  topP: 0.95,
+  minP: 0.05,
+  repeatPenalty: 1.1,
+  presencePenalty: 0,
+  frequencyPenalty: 0,
+  seed: -1,
+  stopSequences: '',
+  systemPrompt: '',
+}
+
 function RemoteChatCard({ host }: { host: { id: string; label: string } }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [temperature, setTemperature] = useState(0.7)
-  const [maxTokens, setMaxTokens] = useState(512)
+  const [params, setParams] = useState<SamplingParams>(DEFAULT_SAMPLING)
+
+  // Subscribe to streamed chunks: append delta to the last assistant
+  // message in place. The event payload always carries the host id so
+  // we filter on that and ignore other hosts' streams if multiple are
+  // active.
+  useEffect(() => {
+    const off = EventsOn(
+      'host:chat:chunk',
+      (evt: { id: string; stream: 'delta' | 'done' | 'error'; text: string }) => {
+        if (evt.id !== host.id) return
+        if (evt.stream === 'delta') {
+          setMessages((prev) => {
+            if (prev.length === 0 || prev[prev.length - 1].role !== 'assistant') {
+              return prev
+            }
+            const next = prev.slice()
+            next[next.length - 1] = {
+              role: 'assistant',
+              content: next[next.length - 1].content + evt.text,
+            }
+            return next
+          })
+        }
+      },
+    )
+    return () => off()
+  }, [host.id])
 
   async function send() {
     const text = input.trim()
     if (!text || sending) return
-    const next: ChatMsg[] = [...messages, { role: 'user', content: text }]
-    setMessages(next)
+
+    // Build the wire payload BEFORE adding the placeholder assistant
+    // message so the model doesn't see an empty assistant turn.
+    const systemBlock = params.systemPrompt.trim()
+      ? [{ role: 'system' as const, content: params.systemPrompt.trim() }]
+      : []
+    const userTurn: ChatMsg = { role: 'user', content: text }
+    const next: ChatMsg[] = [...messages, userTurn]
+    setMessages([...next, { role: 'assistant', content: '' }]) // placeholder
     setInput('')
     setSending(true)
     setError(null)
+
+    const stops = params.stopSequences
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    const extra: Record<string, unknown> = {
+      top_k: params.topK,
+      top_p: params.topP,
+      min_p: params.minP,
+      repeat_penalty: params.repeatPenalty,
+      presence_penalty: params.presencePenalty,
+      frequency_penalty: params.frequencyPenalty,
+    }
+    if (params.seed >= 0) extra.seed = params.seed
+    if (stops.length > 0) extra.stop = stops
+
     try {
-      const result = await RemoteChat(host.id, main.RemoteChatRequest.createFrom({
-        model: 'local',
-        messages: next,
-        maxTokens,
-        temperature,
-      }))
-      if (result.ok) {
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: result.content ?? '' },
-        ])
-      } else {
+      // Type-cast to any to avoid the convertValues wrangle. The Go
+      // side reads JSON tags, not the TS class shape.
+      const result = await RemoteChatStream(
+        host.id,
+        {
+          model: 'local',
+          messages: [...systemBlock, ...next],
+          maxTokens: params.maxTokens,
+          temperature: params.temperature,
+          extra,
+        } as unknown as Parameters<typeof RemoteChatStream>[1],
+      )
+      if (!result.ok) {
         setError(result.error ?? 'unknown error')
+        // Remove the empty placeholder if the stream errored before
+        // any delta arrived.
+        setMessages((prev) => {
+          if (
+            prev.length > 0 &&
+            prev[prev.length - 1].role === 'assistant' &&
+            prev[prev.length - 1].content === ''
+          ) {
+            return prev.slice(0, -1)
+          }
+          return prev
+        })
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -1040,9 +1129,9 @@ function RemoteChatCard({ host }: { host: { id: string; label: string } }) {
             <span className="text-primary">{host.label}</span>
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Sends an OpenAI-shape chat completion through the svc&apos;s
-            /llama proxy. Non-streaming for v1; streaming over the SSH
-            tunnel lands in B.5d.
+            Streamed tokens from the supervised llama-server. Travels
+            GUI → SSH tunnel → svc /llama proxy → llama-server, with
+            SSE chunks flowing back the same path.
           </p>
         </header>
 
@@ -1065,15 +1154,11 @@ function RemoteChatCard({ host }: { host: { id: string; label: string } }) {
                   <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                     {m.role}
                   </p>
-                  <p className="mt-1 whitespace-pre-wrap">{m.content}</p>
+                  <p className="mt-1 whitespace-pre-wrap">
+                    {m.content || (sending && i === messages.length - 1 ? '…' : '')}
+                  </p>
                 </li>
               ))}
-              {sending && (
-                <li className="text-xs text-muted-foreground">
-                  …waiting for response (may take up to a few minutes for
-                  long generations)
-                </li>
-              )}
             </ul>
           )}
         </div>
@@ -1084,7 +1169,9 @@ function RemoteChatCard({ host }: { host: { id: string; label: string } }) {
           </div>
         )}
 
-        <div className="grid gap-3 px-6 py-4 sm:grid-cols-[1fr_auto_auto_auto]">
+        <SamplingPanel params={params} onChange={setParams} />
+
+        <div className="grid gap-3 px-6 py-4 sm:grid-cols-[1fr_auto]">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -1097,17 +1184,6 @@ function RemoteChatCard({ host }: { host: { id: string; label: string } }) {
             placeholder="Type a message and hit Enter (Shift+Enter for newline)"
             rows={2}
             className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
-          />
-          <NumField
-            label="Temp"
-            value={Math.round(temperature * 100)}
-            onChange={(v) => setTemperature(v / 100)}
-            hint="x100"
-          />
-          <NumField
-            label="Max tokens"
-            value={maxTokens}
-            onChange={setMaxTokens}
           />
           <div className="flex items-end gap-2">
             <button
@@ -1124,13 +1200,111 @@ function RemoteChatCard({ host }: { host: { id: string; label: string } }) {
               disabled={sending || !input.trim()}
               className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50"
             >
-              {sending ? 'Sending…' : 'Send'}
+              {sending ? 'Streaming…' : 'Send'}
             </button>
           </div>
         </div>
       </section>
+    </div>
+  )
+}
 
-      <NotPortedYet message="Streamed responses, sampling controls (top-k / top-p / etc), and the prompt-cache + router cards land in B.5d. For now: bring-your-own model + a vanilla chat loop." />
+function SamplingPanel({
+  params,
+  onChange,
+}: {
+  params: SamplingParams
+  onChange: (p: SamplingParams) => void
+}) {
+  return (
+    <div className="border-b border-border bg-muted/20 px-6 py-4">
+      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+        Per-request sampling — applied to the next message
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <NumField
+          label="Temp ×100"
+          value={Math.round(params.temperature * 100)}
+          onChange={(v) => onChange({ ...params, temperature: v / 100 })}
+          hint="0–200; lower = focused"
+        />
+        <NumField
+          label="Max tokens"
+          value={params.maxTokens}
+          onChange={(v) => onChange({ ...params, maxTokens: v })}
+          hint="cap on length"
+        />
+        <NumField
+          label="Top-k"
+          value={params.topK}
+          onChange={(v) => onChange({ ...params, topK: v })}
+          hint="0 = disabled"
+        />
+        <NumField
+          label="Top-p ×100"
+          value={Math.round(params.topP * 100)}
+          onChange={(v) => onChange({ ...params, topP: v / 100 })}
+          hint="nucleus cutoff"
+        />
+        <NumField
+          label="Min-p ×100"
+          value={Math.round(params.minP * 100)}
+          onChange={(v) => onChange({ ...params, minP: v / 100 })}
+          hint="relative cutoff"
+        />
+        <NumField
+          label="Repeat penalty ×100"
+          value={Math.round(params.repeatPenalty * 100)}
+          onChange={(v) => onChange({ ...params, repeatPenalty: v / 100 })}
+        />
+        <NumField
+          label="Presence ×100"
+          value={Math.round(params.presencePenalty * 100)}
+          onChange={(v) => onChange({ ...params, presencePenalty: v / 100 })}
+          hint="-200 to 200"
+        />
+        <NumField
+          label="Frequency ×100"
+          value={Math.round(params.frequencyPenalty * 100)}
+          onChange={(v) => onChange({ ...params, frequencyPenalty: v / 100 })}
+          hint="-200 to 200"
+        />
+        <NumField
+          label="Seed"
+          value={params.seed}
+          onChange={(v) => onChange({ ...params, seed: v })}
+          hint="-1 = random"
+        />
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-xs font-medium">Stop sequences</span>
+          <input
+            type="text"
+            value={params.stopSequences}
+            onChange={(e) =>
+              onChange({ ...params, stopSequences: e.target.value })
+            }
+            placeholder="</answer>, ###"
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+          />
+          <p className="mt-0.5 text-[10px] text-muted-foreground">
+            Comma-separated. Streaming halts when any matches.
+          </p>
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium">System prompt</span>
+          <textarea
+            value={params.systemPrompt}
+            onChange={(e) =>
+              onChange({ ...params, systemPrompt: e.target.value })
+            }
+            placeholder="You are a concise technical assistant."
+            rows={2}
+            className="mt-1 w-full resize-none rounded-md border border-border bg-background px-3 py-1.5 text-sm shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+          />
+        </label>
+      </div>
     </div>
   )
 }

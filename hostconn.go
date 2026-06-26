@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 	bpssh "github.com/inspireailab-admin/blueprint-app/internal/ssh"
 	"github.com/inspireailab-admin/blueprint-app/internal/svcclient"
 )
@@ -175,6 +177,12 @@ type RemoteChatRequest struct {
 	Messages    []svcclient.ChatMessage `json:"messages"`
 	MaxTokens   int                     `json:"maxTokens"`
 	Temperature float64                 `json:"temperature"`
+	// Extra carries advanced sampling params (top_k, top_p, min_p,
+	// repeat_penalty, presence_penalty, frequency_penalty, seed,
+	// stop, system) that get merged into the OpenAI payload as-is.
+	// Names follow llama-server's snake_case convention so the GUI
+	// doesn't have to translate.
+	Extra map[string]any `json:"extra,omitempty"`
 }
 
 // RemoteChatResult is what the GUI renders.
@@ -199,4 +207,57 @@ func (a *App) RemoteChat(id string, req RemoteChatRequest) RemoteChatResult {
 		return RemoteChatResult{Error: err.Error()}
 	}
 	return RemoteChatResult{OK: true, Content: content, Raw: raw}
+}
+
+// RemoteChatStreamEvent is the Wails event channel for streamed chat
+// chunks. Each event carries the host id, a stream tag ('delta' or
+// 'done' or 'error'), and either the delta text or the final
+// accumulated content.
+const RemoteChatStreamEvent = "host:chat:chunk"
+
+// RemoteChatStream is the streaming sibling of RemoteChat. Emits
+// host:chat:chunk events with {id, stream: 'delta'|'done'|'error',
+// text: <delta or final or error>} as the response comes in. Returns
+// the final accumulated content + ok flag once the SSE stream
+// completes (or an error result on dial / HTTP failure).
+//
+// The frontend listens on host:chat:chunk and appends each delta
+// to the currently in-flight assistant message.
+func (a *App) RemoteChatStream(id string, req RemoteChatRequest) RemoteChatResult {
+	c, ok := getHostClient(id)
+	if !ok {
+		return RemoteChatResult{Error: "not connected — call ConnectHost first"}
+	}
+
+	emit := func(stream, text string) {
+		runtime.EventsEmit(a.ctx, RemoteChatStreamEvent, map[string]any{
+			"id":     id,
+			"stream": stream,
+			"text":   text,
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	extra := map[string]any{}
+	for k, v := range req.Extra {
+		extra[k] = v
+	}
+
+	content, err := c.ChatCompletionStream(
+		ctx,
+		req.Model,
+		req.Messages,
+		req.MaxTokens,
+		req.Temperature,
+		extra,
+		func(delta string) { emit("delta", delta) },
+	)
+	if err != nil {
+		emit("error", err.Error())
+		return RemoteChatResult{Error: err.Error(), Content: content}
+	}
+	emit("done", content)
+	return RemoteChatResult{OK: true, Content: content}
 }
