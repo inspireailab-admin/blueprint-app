@@ -80,6 +80,42 @@ type Client struct {
 
 func (cl *Client) Close() error { return cl.c.Close() }
 
+// DialTCP opens a TCP connection through the SSH transport to the
+// given remote address. The caller owns the returned net.Conn.
+//
+// Used to tunnel the svcapi control plane: the remote svc binds
+// 127.0.0.1:17832 and we reach it by calling cl.DialTCP("127.0.0.1:17832").
+// No port mapping involved — net/http can drive the connection directly.
+func (cl *Client) DialTCP(addr string) (net.Conn, error) {
+	return cl.c.Dial("tcp", addr)
+}
+
+// ReadFile fetches a small file from the remote host via `cat`. Cheap
+// way to read the svc bearer token without an SFTP dependency. Caller
+// supplies an absolute remote path.
+func (cl *Client) ReadFile(ctx context.Context, remotePath string) ([]byte, error) {
+	sess, err := cl.c.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Close()
+
+	done := make(chan struct{})
+	var out []byte
+	var runErr error
+	go func() {
+		out, runErr = sess.Output(fmt.Sprintf("cat %q", remotePath))
+		close(done)
+	}()
+	select {
+	case <-done:
+		return out, runErr
+	case <-ctx.Done():
+		_ = sess.Signal(cryptossh.SIGTERM)
+		return nil, ctx.Err()
+	}
+}
+
 // Run executes a single command and returns combined stdout+stderr.
 // Suitable for short fact-finding ("uname -a", "whoami") where we
 // don't care about streaming.
