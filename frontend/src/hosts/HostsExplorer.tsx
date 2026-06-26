@@ -7,9 +7,12 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   AddHost,
   ListHosts,
+  PushInstallHost,
   RemoveHost,
+  TestHostConnection,
 } from '../../wailsjs/go/main/App'
-import type { hosts as hostsModel } from '../../wailsjs/go/models'
+import { EventsOn } from '../../wailsjs/runtime/runtime'
+import type { hosts as hostsModel, main } from '../../wailsjs/go/models'
 
 type Role = 'dev' | 'shared' | 'prod'
 
@@ -22,6 +25,17 @@ const EMPTY_FORM = {
   role: 'dev' as Role,
 }
 
+type ProbeState =
+  | { kind: 'idle' }
+  | { kind: 'probing' }
+  | { kind: 'done'; result: main.HostProbeResult }
+
+type InstallLine = { stream: 'stdout' | 'stderr'; line: string }
+type InstallState =
+  | { kind: 'idle' }
+  | { kind: 'installing'; lines: InstallLine[] }
+  | { kind: 'done'; lines: InstallLine[]; result: main.PushInstallResult }
+
 export function HostsExplorer() {
   const [items, setItems] = useState<hostsModel.Host[]>([])
   const [loading, setLoading] = useState(true)
@@ -29,6 +43,8 @@ export function HostsExplorer() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [addError, setAddError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [probes, setProbes] = useState<Record<string, ProbeState>>({})
+  const [installs, setInstalls] = useState<Record<string, InstallState>>({})
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -46,6 +62,93 @@ export function HostsExplorer() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  // Subscribe to live install lines from the Go side.
+  useEffect(() => {
+    const off = EventsOn(
+      'host:install:line',
+      (evt: { id: string; stream: 'stdout' | 'stderr'; line: string }) => {
+        setInstalls((prev) => {
+          const current = prev[evt.id]
+          if (!current || current.kind !== 'installing') return prev
+          return {
+            ...prev,
+            [evt.id]: {
+              kind: 'installing',
+              lines: [
+                ...current.lines,
+                { stream: evt.stream, line: evt.line },
+              ].slice(-500), // keep the last 500 lines max
+            },
+          }
+        })
+      },
+    )
+    return () => off()
+  }, [])
+
+  async function testConnect(id: string) {
+    setProbes((p) => ({ ...p, [id]: { kind: 'probing' } }))
+    try {
+      const result = await TestHostConnection(id)
+      setProbes((p) => ({ ...p, [id]: { kind: 'done', result } }))
+      // Bump LastSeenAtMs in the list (the registry already wrote it)
+      void refresh()
+    } catch (err) {
+      setProbes((p) => ({
+        ...p,
+        [id]: {
+          kind: 'done',
+          result: {
+            id,
+            reachable: false,
+            latencyMs: 0,
+            error: err instanceof Error ? err.message : String(err),
+          } as main.HostProbeResult,
+        },
+      }))
+    }
+  }
+
+  async function pushInstall(id: string, label: string) {
+    if (
+      !confirm(
+        `Push-install Blueprint on "${label}"?\n\nThis SCPs install-linux.sh to the host and runs it under sudo. The host must be a systemd Linux box and the user must have passwordless sudo (or be root).`,
+      )
+    ) {
+      return
+    }
+    setInstalls((p) => ({ ...p, [id]: { kind: 'installing', lines: [] } }))
+    try {
+      const result = await PushInstallHost(id)
+      setInstalls((p) => {
+        const current = p[id]
+        const lines =
+          current && current.kind === 'installing' ? current.lines : []
+        return { ...p, [id]: { kind: 'done', lines, result } }
+      })
+      void refresh()
+    } catch (err) {
+      setInstalls((p) => {
+        const current = p[id]
+        const lines =
+          current && current.kind === 'installing' ? current.lines : []
+        return {
+          ...p,
+          [id]: {
+            kind: 'done',
+            lines,
+            result: {
+              id,
+              ok: false,
+              exitCode: -1,
+              error: err instanceof Error ? err.message : String(err),
+            } as main.PushInstallResult,
+          },
+        }
+      })
+    }
+  }
 
   async function submitAdd() {
     setAddError(null)
@@ -196,58 +299,178 @@ export function HostsExplorer() {
               <HostRow
                 key={h.id}
                 host={h}
+                probe={probes[h.id] ?? { kind: 'idle' }}
+                install={installs[h.id] ?? { kind: 'idle' }}
                 onRemove={() => void remove(h.id, h.label)}
+                onTest={() => void testConnect(h.id)}
+                onInstall={() => void pushInstall(h.id, h.label)}
               />
             ))}
           </ul>
         )}
       </section>
-
-      <PhaseNote />
     </div>
   )
 }
 
 function HostRow({
   host,
+  probe,
+  install,
   onRemove,
+  onTest,
+  onInstall,
 }: {
   host: hostsModel.Host
+  probe: ProbeState
+  install: InstallState
   onRemove: () => void
+  onTest: () => void
+  onInstall: () => void
 }) {
   return (
-    <li className="grid grid-cols-[1fr_auto_auto] items-center gap-4 px-6 py-4">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold tracking-tight">
-          {host.label}
-          <RoleBadge role={host.role as Role} />
-        </p>
-        <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-          {host.user}@{host.host}
-          {host.port && host.port !== 22 ? `:${host.port}` : ''}
-          {host.keyPath ? `  ·  key: ${host.keyPath}` : '  ·  agent / default key'}
+    <li className="px-6 py-4">
+      <div className="grid grid-cols-[1fr_auto] items-center gap-4">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold tracking-tight">
+            {host.label}
+            <RoleBadge role={host.role as Role} />
+          </p>
+          <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+            {host.user}@{host.host}
+            {host.port && host.port !== 22 ? `:${host.port}` : ''}
+            {host.keyPath
+              ? `  ·  key: ${host.keyPath}`
+              : '  ·  agent / default key'}
+            <span className="mx-2 opacity-40">·</span>
+            {host.lastSeenAtMs
+              ? `seen ${formatRelative(host.lastSeenAtMs)}`
+              : 'never connected'}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onTest}
+            disabled={probe.kind === 'probing'}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+          >
+            {probe.kind === 'probing' ? 'Testing…' : 'Test connect'}
+          </button>
+          <button
+            type="button"
+            onClick={onInstall}
+            disabled={install.kind === 'installing'}
+            className="rounded-md border border-primary/40 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition hover:bg-primary/10 disabled:opacity-50"
+          >
+            {install.kind === 'installing' ? 'Installing…' : 'Push-install'}
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-destructive/10 hover:text-destructive"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+
+      {probe.kind === 'done' && <ProbePanel probe={probe.result} />}
+      {(install.kind === 'installing' || install.kind === 'done') && (
+        <InstallPanel install={install} />
+      )}
+    </li>
+  )
+}
+
+function ProbePanel({ probe }: { probe: main.HostProbeResult }) {
+  if (!probe.reachable) {
+    return (
+      <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs">
+        <p className="font-semibold text-destructive">Could not reach host</p>
+        <p className="mt-1 font-mono text-[11px] text-destructive/80">
+          {probe.error || 'Unknown error'}
         </p>
       </div>
-      <span
-        className="font-mono text-[11px] text-muted-foreground"
-        title={
-          host.lastSeenAtMs
-            ? new Date(host.lastSeenAtMs).toISOString()
-            : 'Never connected'
-        }
-      >
-        {host.lastSeenAtMs
-          ? `seen ${formatRelative(host.lastSeenAtMs)}`
-          : 'never connected'}
-      </span>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-destructive/10 hover:text-destructive"
-      >
-        Remove
-      </button>
-    </li>
+    )
+  }
+  return (
+    <div className="mt-3 rounded-md border border-chart-4/30 bg-chart-4/5 p-3 text-xs">
+      <p className="font-semibold text-chart-4">
+        Reachable
+        <span className="ml-2 font-mono text-[10px] opacity-70">
+          {probe.latencyMs} ms
+        </span>
+      </p>
+      <dl className="mt-2 grid gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-2">
+        {probe.osPretty && <KV k="OS" v={probe.osPretty} />}
+        {probe.uname && <KV k="uname" v={probe.uname} />}
+        {(probe.cpuCount ?? 0) > 0 && (
+          <KV k="CPU" v={`${probe.cpuCount} cores`} />
+        )}
+        {(probe.memTotalGB ?? 0) > 0 && (
+          <KV k="RAM" v={`${probe.memTotalGB} GB`} />
+        )}
+        {probe.gpuSummary && (
+          <KV k="GPU" v={probe.gpuSummary.split('\n').join(' / ')} />
+        )}
+      </dl>
+    </div>
+  )
+}
+
+function InstallPanel({ install }: { install: InstallState }) {
+  if (install.kind === 'idle') return null
+  const isDone = install.kind === 'done'
+  const result = isDone ? install.result : null
+  const failed = isDone && result && !result.ok
+  return (
+    <div
+      className={[
+        'mt-3 rounded-md border p-3',
+        failed
+          ? 'border-destructive/40 bg-destructive/5'
+          : isDone
+            ? 'border-chart-4/30 bg-chart-4/5'
+            : 'border-border bg-muted/30',
+      ].join(' ')}
+    >
+      <p className="text-xs font-semibold">
+        {install.kind === 'installing'
+          ? 'Installing… (output below)'
+          : failed
+            ? `Install failed (exit ${result?.exitCode ?? '?'})`
+            : 'Install succeeded'}
+      </p>
+      <pre className="mt-2 max-h-[200px] overflow-y-auto rounded border border-border/60 bg-card p-2 font-mono text-[10px] leading-relaxed">
+        {install.lines.length === 0
+          ? '…connecting…'
+          : install.lines.map((l, i) => (
+              <div
+                key={i}
+                className={
+                  l.stream === 'stderr' ? 'text-destructive/80' : ''
+                }
+              >
+                {l.line}
+              </div>
+            ))}
+      </pre>
+      {failed && result?.error && (
+        <p className="mt-2 font-mono text-[10px] text-destructive/80">
+          {result.error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function KV({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <dt className="text-muted-foreground">{k}</dt>
+      <dd className="min-w-0 truncate">{v}</dd>
+    </div>
   )
 }
 
@@ -284,22 +507,6 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       >
         + Add your first host
       </button>
-    </div>
-  )
-}
-
-function PhaseNote() {
-  return (
-    <div className="rounded-xl border border-dashed border-border bg-card/50 px-5 py-4 text-xs text-muted-foreground">
-      <p className="font-mono text-[10px] uppercase tracking-[0.14em]">
-        Coming in the next pass
-      </p>
-      <p className="mt-1.5">
-        <b>Test connect</b> button per host, <b>push-install</b> Blueprint
-        over SSH, and <b>host-aware Dashboard</b> so Overview / Models /
-        Calibrate target the selected host instead of always local. The
-        registry above is the data layer for all of it.
-      </p>
     </div>
   )
 }
