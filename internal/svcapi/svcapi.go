@@ -31,6 +31,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -109,6 +111,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/v1/snapshot", s.auth(s.handleSnapshot))
 	mux.HandleFunc("/v1/serve", s.auth(s.handleServe))
 	mux.HandleFunc("/v1/stop", s.auth(s.handleStop))
+	// /llama/* reverse-proxies to the supervised llama-server on
+	// 127.0.0.1:{cfg.Port}. The svc strips the /llama prefix and
+	// injects llama-server's APIKey as the bearer header — the
+	// GUI only sees the svc token, never the llama key.
+	mux.HandleFunc("/llama/", s.auth(s.handleLlamaProxy))
 	return mux
 }
 
@@ -294,6 +301,52 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		"updatedAt": in.UpdatedAt,
 		"note":      "supervisor picks up the new config within ~5s",
 	})
+}
+
+// handleLlamaProxy reverse-proxies /llama/* to the supervised
+// llama-server. The svc reads the current svcconfig on every
+// request (cheap — it's a small JSON file) so the proxy follows
+// the running model even after a hot-swap via /v1/serve. Strips
+// the "/llama" prefix and injects the llama APIKey so the GUI
+// never has to know it.
+func (s *Server) handleLlamaProxy(w http.ResponseWriter, r *http.Request) {
+	cfg, err := svcconfig.ReadConfig()
+	if err != nil || cfg == nil || cfg.Port == 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "no llama-server config — start a model via /v1/serve first",
+		})
+		return
+	}
+	bind := cfg.BindHost
+	if bind == "" || bind == "0.0.0.0" {
+		bind = "127.0.0.1"
+	}
+	target, err := url.Parse(fmt.Sprintf("http://%s:%d", bind, cfg.Port))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Strip the "/llama" prefix from the inbound path so it lines up
+	// with llama-server's native API surface.
+	r.URL.Path = strings.TrimPrefix(r.URL.Path, "/llama")
+	if !strings.HasPrefix(r.URL.Path, "/") {
+		r.URL.Path = "/" + r.URL.Path
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.Host = target.Host
+		if cfg.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		} else {
+			req.Header.Del("Authorization")
+		}
+	}
+	proxy.FlushInterval = 100 * time.Millisecond // SSE-friendly
+	proxy.ServeHTTP(w, r)
 }
 
 // handleStop deletes the config file. The supervisor sees the missing
