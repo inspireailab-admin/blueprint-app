@@ -6,51 +6,32 @@ import { usePlannerState } from './planner/state'
 import type { Model } from './planner/types'
 import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
-import { CalibrateExplorer } from './calibrate/CalibrateExplorer'
 import { DashboardExplorer } from './dashboard/DashboardExplorer'
 import { StartOverlay } from './start/StartOverlay'
 import { LicenseGate } from './license/LicenseGate'
 import type { ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
-import { MaintainExplorer } from './maintain/MaintainExplorer'
 import { AboutDialog } from './AboutDialog'
 import { smallestQuant } from './planner/vram'
 
-// Navigable views. `dashboard` is the operational home — Start is not in
-// here because it's a one-time-per-launch overlay, not a navigable view.
+// Top-level navigation is just the Dashboard. Plan / Hardware / Deploy
+// are a wizard (one journey, not three peer tabs), and Calibrate +
+// Maintain live as sub-tabs INSIDE the Dashboard, not at the top.
 //
-// "optimize" is gone — quant, ctx size, GPU layers, and the advanced
-// runtime flags all live in the Dashboard's ServiceCard now. Plan +
-// Hardware are still here for the catalog browse + sizing math; once
-// the user has picked a model and pulled it via the installer, they
-// live entirely in the Dashboard.
-// Two groups of tabs, separated visually:
-//
-//   Setup wizard (linear): Plan -> Hardware -> Deploy
-//   Operational (peer):    Dashboard, Calibrate, Maintain
-//
-// Monitor is gone — its content (CPU / RAM / VRAM tiles, sparklines,
-// GPU breakdown) all lives in the Dashboard now. After the user
-// finishes the Deploy wizard the operational life of the app is
-// Dashboard-centric.
-type TabId = 'dashboard' | 'plan' | 'hardware' | 'deploy' | 'calibrate' | 'maintain'
+// The "+ Add new LLM" button in the title bar opens the wizard; the
+// Dashboard is the home and the user lives there.
 
-const TABS: { id: TabId; label: string; description: string }[] = [
-  { id: 'dashboard', label: 'Dashboard', description: 'Live status. Tune sampling and server config from here.' },
-  { id: 'plan', label: 'Plan', description: 'Pick a model that fits your workload.' },
-  { id: 'hardware', label: 'Hardware', description: 'Size the hardware. Three configurations, no pricing.' },
-  { id: 'deploy', label: 'Deploy', description: 'Install runtime, pull the model, start serving, verify.' },
-  { id: 'calibrate', label: 'Calibrate', description: 'Custom imatrix calibration + quantization for a client workload.' },
-  { id: 'maintain', label: 'Maintain', description: 'Updates, swap models, restart, logs.' },
-]
+type WizardStep = 'plan' | 'hardware' | 'deploy'
 
 export function App() {
   // Start overlay shows on every launch as a full-screen welcome.
-  // Clicking OK dismisses it for the session; there's no way back to
-  // it from the menu (it isn't a view) — the user is routed to
-  // Dashboard if any model is on disk, otherwise to Plan.
   const [showStart, setShowStart] = useState(true)
-  const [active, setActive] = useState<TabId>('dashboard')
+
+  // null = on the Dashboard, otherwise the wizard is open at this step.
+  const [wizard, setWizard] = useState<WizardStep | null>(null)
+
+  // Which Dashboard sub-tab is showing.
+  const [dashTab, setDashTab] = useState<DashboardTabId>('overview')
 
   const [version, setVersion] = useState<main.VersionInfo | null>(null)
   const [versionError, setVersionError] = useState<string | null>(null)
@@ -83,7 +64,6 @@ export function App() {
       )
   }, [])
 
-  const activeTab = TABS.find((t) => t.id === active)!
   const selectedModel = findModel(models ?? [], planner.selectedModelId)
 
   useEffect(() => {
@@ -96,63 +76,59 @@ export function App() {
   async function dismissStart() {
     try {
       const installed = await InstalledModels()
-      setActive(installed && installed.length > 0 ? 'dashboard' : 'plan')
+      // First-launch: no model on disk → open the wizard at step 1.
+      if (!installed || installed.length === 0) {
+        setWizard('plan')
+      }
     } catch {
-      setActive('plan')
+      setWizard('plan')
     }
     setShowStart(false)
+  }
+
+  function closeWizard() {
+    setWizard(null)
   }
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {showStart && <StartOverlay onDismiss={() => void dismissStart()} />}
       <LicenseGate />
-      <TitleBar version={version} onGoToMaintain={() => setActive('maintain')} />
-      <TabBar tabs={TABS} active={active} onSelect={setActive} />
+      <TitleBar
+        version={version}
+        wizardActive={wizard !== null}
+        onAddLLM={() => setWizard('plan')}
+        onCloseWizard={closeWizard}
+        onGoToMaintain={() => {
+          setWizard(null)
+          setDashTab('maintain')
+        }}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-6xl px-8 py-8 selectable">
-            <p className="eyebrow">{activeTab.label}</p>
-            <h1 className="mt-2 text-balance text-2xl font-semibold tracking-tight">
-              {activeTab.description}
-            </h1>
-
+          <div className="px-6 py-5 selectable">
             {catalogError ? (
               <CatalogError message={catalogError} />
-            ) : active === 'dashboard' ? (
-              <DashboardExplorer
-                onGoTo={setActive}
+            ) : wizard !== null ? (
+              <WizardSurface
+                step={wizard}
+                models={models}
+                selectedModel={selectedModel}
+                planner={planner}
+                catalogAsOf={catalogAsOf}
+                serveConfig={serveConfig}
+                onSetStep={setWizard}
+                onClose={closeWizard}
+              />
+            ) : (
+              <DashboardSurface
+                active={dashTab}
+                onSelect={setDashTab}
                 serveConfig={serveConfig}
                 onSelectModel={planner.selectModel}
+                onAddLLM={() => setWizard('plan')}
               />
-            ) : active === 'plan' ? (
-              <PlanExplorer
-                models={models}
-                planner={planner}
-                onContinueToHardware={() => setActive('hardware')}
-              />
-            ) : active === 'hardware' ? (
-              <HardwareExplorer
-                selectedModel={selectedModel}
-                requirements={planner.requirements}
-                catalogAsOf={catalogAsOf}
-                onUpdate={planner.update}
-                onBackToPlan={() => setActive('plan')}
-                onContinueToDeploy={() => setActive('deploy')}
-              />
-            ) : active === 'deploy' ? (
-              <DeployExplorer
-                selectedModel={selectedModel}
-                serveConfig={serveConfig}
-                onBackToOptimize={() => setActive('dashboard')}
-              />
-            ) : active === 'calibrate' ? (
-              <CalibrateExplorer />
-            ) : active === 'maintain' ? (
-              <MaintainExplorer />
-            ) : (
-              <PlaceholderBody tab={activeTab} />
             )}
           </div>
         </main>
@@ -163,9 +139,163 @@ export function App() {
   )
 }
 
+// ─── Wizard surface ────────────────────────────────────────────────
+
+function WizardSurface({
+  step,
+  models,
+  selectedModel,
+  planner,
+  catalogAsOf,
+  serveConfig,
+  onSetStep,
+  onClose,
+}: {
+  step: WizardStep
+  models: Model[] | null
+  selectedModel: Model | null
+  planner: ReturnType<typeof usePlannerState>
+  catalogAsOf: string
+  serveConfig: ServeConfig
+  onSetStep: (s: WizardStep) => void
+  onClose: () => void
+}) {
+  const steps: { id: WizardStep; label: string }[] = [
+    { id: 'plan', label: '1. Plan' },
+    { id: 'hardware', label: '2. Hardware' },
+    { id: 'deploy', label: '3. Deploy' },
+  ]
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
+        <div className="flex items-center gap-2">
+          {steps.map((s, i) => {
+            const isActive = s.id === step
+            return (
+              <div key={s.id} className="flex items-center gap-2">
+                {i > 0 && <span aria-hidden className="text-muted-foreground">›</span>}
+                <button
+                  type="button"
+                  onClick={() => onSetStep(s.id)}
+                  className={[
+                    'rounded px-2 py-1 text-sm font-medium transition',
+                    isActive
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:text-foreground',
+                  ].join(' ')}
+                >
+                  {s.label}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          ✕ Cancel
+        </button>
+      </div>
+
+      {step === 'plan' && (
+        <PlanExplorer
+          models={models}
+          planner={planner}
+          onContinueToHardware={() => onSetStep('hardware')}
+        />
+      )}
+      {step === 'hardware' && (
+        <HardwareExplorer
+          selectedModel={selectedModel}
+          requirements={planner.requirements}
+          catalogAsOf={catalogAsOf}
+          onUpdate={planner.update}
+          onBackToPlan={() => onSetStep('plan')}
+          onContinueToDeploy={() => onSetStep('deploy')}
+        />
+      )}
+      {step === 'deploy' && (
+        <DeployExplorer
+          selectedModel={selectedModel}
+          serveConfig={serveConfig}
+          onBackToOptimize={onClose}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Dashboard surface ─────────────────────────────────────────────
+
+type DashboardTabId = 'overview' | 'inference' | 'models' | 'calibrate' | 'maintain'
+
+const DASH_TABS: { id: DashboardTabId; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'inference', label: 'Inference' },
+  { id: 'models', label: 'Models' },
+  { id: 'calibrate', label: 'Calibrate' },
+  { id: 'maintain', label: 'Maintain' },
+]
+
+function DashboardSurface({
+  active,
+  onSelect,
+  serveConfig,
+  onSelectModel,
+  onAddLLM,
+}: {
+  active: DashboardTabId
+  onSelect: (id: DashboardTabId) => void
+  serveConfig: ServeConfig
+  onSelectModel: (modelId: string) => void
+  onAddLLM: () => void
+}) {
+  return (
+    <div>
+      <nav
+        role="tablist"
+        aria-label="Dashboard"
+        className="-mx-2 mb-4 flex gap-1 border-b border-border"
+      >
+        {DASH_TABS.map((tab) => {
+          const isActive = tab.id === active
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              type="button"
+              aria-selected={isActive}
+              onClick={() => onSelect(tab.id)}
+              className={[
+                '-mb-px border-b-2 px-3 py-2 text-sm font-medium transition',
+                isActive
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground',
+              ].join(' ')}
+            >
+              {tab.label}
+            </button>
+          )
+        })}
+      </nav>
+
+      <DashboardExplorer
+        section={active}
+        serveConfig={serveConfig}
+        onSelectModel={onSelectModel}
+        onAddLLM={onAddLLM}
+      />
+    </div>
+  )
+}
+
+// ─── Chrome ────────────────────────────────────────────────────────
+
 function CatalogError({ message }: { message: string }) {
   return (
-    <div className="mt-8 rounded-xl border border-destructive/40 bg-destructive/5 p-6 text-sm">
+    <div className="mt-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm">
       <p className="font-semibold text-destructive">Couldn&apos;t load the catalog</p>
       <p className="mt-1 text-foreground/80">{message}</p>
       <p className="mt-3 text-xs text-muted-foreground">
@@ -178,28 +308,54 @@ function CatalogError({ message }: { message: string }) {
 
 function TitleBar({
   version,
+  wizardActive,
+  onAddLLM,
+  onCloseWizard,
   onGoToMaintain,
 }: {
   version: main.VersionInfo | null
+  wizardActive: boolean
+  onAddLLM: () => void
+  onCloseWizard: () => void
   onGoToMaintain: () => void
 }) {
   const [aboutOpen, setAboutOpen] = useState(false)
   return (
     <>
-      <div className="flex items-center justify-between border-b border-border bg-card px-6 py-3">
-        <div className="flex items-baseline gap-2">
+      <div className="flex items-center justify-between border-b border-border bg-card px-5 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <BlueprintMark />
           <h2 className="text-base font-semibold tracking-tight">Blueprint</h2>
-          <p className="text-xs text-muted-foreground">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
             Run open LLMs on your own hardware.
-          </p>
+          </span>
         </div>
-        <button
-          type="button"
-          onClick={() => setAboutOpen(true)}
-          className="rounded-md px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
-        >
-          About
-        </button>
+        <div className="flex items-center gap-2">
+          {wizardActive ? (
+            <button
+              type="button"
+              onClick={onCloseWizard}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
+            >
+              ← Back to Dashboard
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onAddLLM}
+              className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
+            >
+              + Add new LLM
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setAboutOpen(true)}
+            className="rounded-md px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            About
+          </button>
+        </div>
       </div>
       {aboutOpen && (
         <AboutDialog
@@ -212,77 +368,22 @@ function TitleBar({
   )
 }
 
-function TabBar({
-  tabs,
-  active,
-  onSelect,
-}: {
-  tabs: typeof TABS
-  active: TabId
-  onSelect: (id: TabId) => void
-}) {
+function BlueprintMark() {
   return (
-    <nav
-      role="tablist"
-      aria-label="Main"
-      className="flex gap-1 border-b border-border bg-card px-4"
+    <svg
+      viewBox="0 0 48 48"
+      className="h-6 w-6 text-primary"
+      fill="none"
+      aria-hidden
     >
-      {tabs.map((tab) => {
-        const isActive = tab.id === active
-        return (
-          <button
-            key={tab.id}
-            role="tab"
-            type="button"
-            aria-selected={isActive}
-            onClick={() => onSelect(tab.id)}
-            className={[
-              '-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition',
-              isActive
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
-            ].join(' ')}
-          >
-            {tab.label}
-          </button>
-        )
-      })}
-    </nav>
+      <circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2.5" />
+      <circle cx="24" cy="24" r="5" fill="currentColor" />
+      <line x1="24" y1="0" x2="24" y2="10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+      <line x1="24" y1="38" x2="24" y2="48" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+      <line x1="0" y1="24" x2="10" y2="24" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+      <line x1="38" y1="24" x2="48" y2="24" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
   )
-}
-
-function PlaceholderBody({ tab }: { tab: (typeof TABS)[number] }) {
-  return (
-    <div className="mt-8 rounded-2xl border border-dashed border-border bg-card p-10">
-      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-        Coming in Phase {phaseFor(tab.id)}
-      </p>
-      <p className="mt-2 text-base font-semibold tracking-tight">
-        {tab.label} tab is a scaffold today.
-      </p>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-        Phase {phaseFor(tab.id)} ships the actual {tab.label.toLowerCase()} surface —
-        see the project roadmap for details.
-      </p>
-    </div>
-  )
-}
-
-function phaseFor(id: TabId): number {
-  switch (id) {
-    case 'dashboard':
-      return 1
-    case 'plan':
-      return 2
-    case 'hardware':
-      return 3
-    case 'deploy':
-      return 4
-    case 'calibrate':
-      return 4.5
-    case 'maintain':
-      return 6
-  }
 }
 
 function StatusBar({
@@ -293,7 +394,7 @@ function StatusBar({
   versionError: string | null
 }) {
   return (
-    <footer className="flex items-center justify-between border-t border-border bg-card px-6 py-2 font-mono text-[11px] text-muted-foreground">
+    <footer className="flex items-center justify-between border-t border-border bg-card px-5 py-1.5 font-mono text-[11px] text-muted-foreground">
       {versionError ? (
         <span className="text-destructive">Kernel error: {versionError}</span>
       ) : version ? (
@@ -302,7 +403,7 @@ function StatusBar({
           <span className="mx-2 opacity-40">·</span>
           <b className="text-foreground">{version.modelCount}</b> models
           <span className="mx-2 opacity-40">·</span>
-          catalog as of <b className="text-foreground">{version.catalogAsOf}</b>
+          catalog <b className="text-foreground">{version.catalogAsOf}</b>
         </span>
       ) : (
         <span>Loading…</span>
