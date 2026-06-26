@@ -19,7 +19,6 @@
 
 import { useEffect, useState } from 'react'
 import {
-  BlueprintDataSummary,
   CurrentServeConfig,
   InstalledModels,
   LatestRuntimeVersion,
@@ -39,11 +38,18 @@ import { RemoteServersCard } from './RemoteServersCard'
 import { RouterCard } from './RouterCard'
 import { ServiceCard } from './ServiceCard'
 import { TrainCard } from './TrainCard'
+import { CalibrateExplorer } from '../calibrate/CalibrateExplorer'
+import { MaintainExplorer } from '../maintain/MaintainExplorer'
 
 const POLL_MS = 2000
 const HISTORY_LEN = 60
 
-type GoTo = (tab: 'plan' | 'hardware' | 'deploy' | 'calibrate' | 'maintain') => void
+export type DashboardSection =
+  | 'overview'
+  | 'inference'
+  | 'models'
+  | 'calibrate'
+  | 'maintain'
 
 type ServeConfig = {
   quant: string
@@ -52,21 +58,28 @@ type ServeConfig = {
 }
 
 type Props = {
-  onGoTo: GoTo
+  /** Which sub-tab is active inside the dashboard. */
+  section: DashboardSection
   serveConfig: ServeConfig
-  /** Called by ModelsOnDiskCard's Serve buttons to pre-select a model
-   *  before routing the user to Plan / Deploy. */
+  /** Called by Models cards' Serve buttons to pre-select a model
+   *  before routing the user to the Add-LLM wizard. */
   onSelectModel: (modelId: string) => void
+  /** Open the Add-LLM wizard from any "+ Add" CTA inside the dashboard. */
+  onAddLLM: () => void
 }
 
-export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props) {
+export function DashboardExplorer({
+  section,
+  serveConfig,
+  onSelectModel,
+  onAddLLM,
+}: Props) {
   const [installed, setInstalled] = useState<main.InstalledModel[] | null>(null)
   const [runtime, setRuntime] = useState<main.RuntimeStatus | null>(null)
   const [runtimeUpdate, setRuntimeUpdate] = useState<main.RuntimeUpdate | null>(null)
   const [svcInfo, setSvcInfo] = useState<main.ServiceInfo | null>(null)
   const [svcConfig, setSvcConfig] = useState<svcconfig.Config | null>(null)
   const [snap, setSnap] = useState<main.Snapshot | null>(null)
-  const [dataSummary, setDataSummary] = useState<main.BlueprintDataSummary | null>(null)
   const [metrics, setMetrics] = useState<main.LlamaMetrics | null>(null)
 
   const [cpuHistory, setCpuHistory] = useState<number[]>([])
@@ -143,16 +156,14 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
   }, [serving])
 
   async function refreshAll() {
-    const [im, rt, sn, ds] = await Promise.all([
+    const [im, rt, sn] = await Promise.all([
       InstalledModels(),
       RuntimeStatus(),
       Snapshot(),
-      BlueprintDataSummary(),
     ])
     setInstalled(im ?? [])
     setRuntime(rt)
     setSnap(sn)
-    setDataSummary(ds)
     LatestRuntimeVersion()
       .then(setRuntimeUpdate)
       .catch(() => setRuntimeUpdate(null))
@@ -162,75 +173,101 @@ export function DashboardExplorer({ onGoTo, serveConfig, onSelectModel }: Props)
   const runtimeReady = !!runtime?.installed
   const currentServingId = serving ? svcInfo?.modelId : undefined
 
-  return (
-    <div className="mt-8 space-y-6">
-      <ServiceCard
-        installed={installed}
-        defaults={{
-          quant: serveConfig.quant,
-          ctxSize: serveConfig.ctxSize,
-          nGpuLayers: serveConfig.nGpuLayers,
-        }}
-        onPickModel={() => onGoTo('plan')}
-      />
+  // Calibrate + Maintain are sub-tabs with their own full UIs — render
+  // them and bail, no system tiles or chat overlays.
+  if (section === 'calibrate') {
+    return <CalibrateExplorer />
+  }
+  if (section === 'maintain') {
+    return <MaintainExplorer />
+  }
 
-      <SystemTiles
-        snap={snap}
-        cpuHistory={cpuHistory}
-        ramHistory={ramHistory}
-        vramHistory={vramHistory}
-      />
+  // Overview: at-a-glance — server state + system + GPU + insights.
+  // Designed to fit on one screen at 1080p; no inference/chat noise.
+  if (section === 'overview') {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
+          <ServiceCard
+            installed={installed}
+            defaults={{
+              quant: serveConfig.quant,
+              ctxSize: serveConfig.ctxSize,
+              nGpuLayers: serveConfig.nGpuLayers,
+            }}
+            onPickModel={onAddLLM}
+          />
+          <RecommendationsCard
+            snap={snap}
+            runtimeUpdate={runtimeUpdate}
+            running={serving}
+            hasModel={hasModel}
+            runtimeReady={runtimeReady}
+          />
+        </div>
 
-      {snap && snap.gpus.length > 0 && <GpuBreakdown snap={snap} />}
-
-      {serving && svcConfig && (
-        <DashboardChat
-          port={svcConfig.port}
-          apiKey={svcConfig.apiKey}
+        <SystemTiles
+          snap={snap}
+          cpuHistory={cpuHistory}
+          ramHistory={ramHistory}
+          vramHistory={vramHistory}
         />
-      )}
 
-      {serving && <PerformanceCard metrics={metrics} />}
+        {snap && snap.gpus.length > 0 && <GpuBreakdown snap={snap} />}
+      </div>
+    )
+  }
 
-      {serving && <PromptCacheCard />}
+  // Inference: only useful when a server is running — chat + perf +
+  // optimizations (cache + router).
+  if (section === 'inference') {
+    if (!serving) {
+      return (
+        <div className="mt-6 rounded-xl border border-dashed border-border bg-card p-8 text-center">
+          <p className="text-sm font-semibold tracking-tight">
+            No model serving yet
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Start a server from the Overview tab, then come back here to
+            chat with the model, watch live performance, and tune the
+            prompt cache + router.
+          </p>
+        </div>
+      )
+    }
+    return (
+      <div className="space-y-4">
+        {svcConfig && (
+          <DashboardChat port={svcConfig.port} apiKey={svcConfig.apiKey} />
+        )}
+        <PerformanceCard metrics={metrics} />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <PromptCacheCard />
+          <RouterCard />
+        </div>
+      </div>
+    )
+  }
 
-      {serving && <RouterCard />}
-
-      <PythonRuntimeCard />
-
-      <TrainCard />
-
-      <RemoteServersCard />
-
+  // Models: everything about what's on disk + remote servers + Python.
+  return (
+    <div className="space-y-4">
       <ModelsOnDiskCard
         installed={installed}
         currentServingId={currentServingId}
         running={serving}
-        onPickAnother={() => onGoTo('plan')}
+        onPickAnother={onAddLLM}
         onServe={(m) => {
           onSelectModel(m.id)
-          onGoTo('deploy')
+          onAddLLM()
         }}
-        onManage={() => onGoTo('maintain')}
+        onManage={onAddLLM}
       />
-
-      {hasModel && <CalibrateCard onGoTo={() => onGoTo('calibrate')} />}
-
-      <MaintenanceCard
-        runtime={runtime}
-        runtimeUpdate={runtimeUpdate}
-        dataSummary={dataSummary}
-        installed={installed}
-        onMaintain={() => onGoTo('maintain')}
-      />
-
-      <RecommendationsCard
-        snap={snap}
-        runtimeUpdate={runtimeUpdate}
-        running={serving}
-        hasModel={hasModel}
-        runtimeReady={runtimeReady}
-      />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RemoteServersCard />
+        <PythonRuntimeCard />
+      </div>
+      <TrainCard />
     </div>
   )
 }
@@ -522,95 +559,6 @@ function ModelsOnDiskCard({
   )
 }
 
-// ─── Maintenance ────────────────────────────────────────────────────────
-
-// ─── Calibrate CTA ──────────────────────────────────────────────────────
-
-function CalibrateCard({ onGoTo }: { onGoTo: () => void }) {
-  return (
-    <section className="overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/5 to-card shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3 px-6 py-5">
-        <div className="min-w-0">
-          <p className="eyebrow">Custom calibration</p>
-          <p className="mt-1 text-base font-semibold tracking-tight">
-            Quantize this model for the client&apos;s workload
-          </p>
-          <p className="mt-1 max-w-prose text-xs text-muted-foreground">
-            Pre-quantized GGUFs from HuggingFace are calibrated on a generic corpus. Run
-            <code className="mx-1 font-mono">llama-imatrix</code>
-            against the client&apos;s representative prompts and produce custom GGUFs that
-            measurably beat the stock variant on their eval set — the artefact + the report
-            are what the engagement delivers.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onGoTo}
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
-        >
-          Open Calibrate →
-        </button>
-      </div>
-    </section>
-  )
-}
-
-function MaintenanceCard({
-  runtime,
-  runtimeUpdate,
-  dataSummary,
-  installed,
-  onMaintain,
-}: {
-  runtime: main.RuntimeStatus | null
-  runtimeUpdate: main.RuntimeUpdate | null
-  dataSummary: main.BlueprintDataSummary | null
-  installed: main.InstalledModel[] | null
-  onMaintain: () => void
-}) {
-  const modelBytes = (installed ?? []).reduce((a, m) => a + m.bytesSize, 0)
-  return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <header className="flex items-center justify-between border-b border-border px-6 py-4">
-        <div>
-          <h2 className="text-base font-semibold tracking-tight">Maintenance</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Runtime version and disk footprint.</p>
-        </div>
-        <button
-          type="button"
-          onClick={onMaintain}
-          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition hover:bg-muted"
-        >
-          Open Maintain →
-        </button>
-      </header>
-      <dl className="grid gap-x-6 gap-y-2 px-6 py-4 text-sm sm:grid-cols-2">
-        <KV
-          k="Runtime"
-          v={
-            runtime?.installed
-              ? `${runtime.version}${runtimeUpdate?.hasUpdate ? ` → ${runtimeUpdate.latest} available` : ''}`
-              : 'Not installed'
-          }
-          mono
-          accent={runtimeUpdate?.hasUpdate ? 'warn' : undefined}
-        />
-        <KV
-          k="Models on disk"
-          v={installed ? `${installed.length} · ${humanBytes(modelBytes)}` : '—'}
-        />
-        <KV k="Blueprint data" v={dataSummary ? humanBytes(dataSummary.bytesTotal) : '—'} />
-        <KV
-          k="Data path"
-          v={dataSummary?.path ?? '—'}
-          mono
-          small
-        />
-      </dl>
-    </section>
-  )
-}
-
 // ─── Recommendations ────────────────────────────────────────────────────
 
 type Recommendation = {
@@ -731,37 +679,6 @@ function RecommendationsCard(props: {
 }
 
 // ─── Bits ───────────────────────────────────────────────────────────────
-
-function KV({
-  k,
-  v,
-  mono,
-  small,
-  accent,
-}: {
-  k: string
-  v: string
-  mono?: boolean
-  small?: boolean
-  accent?: 'warn'
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-border/40 pb-2 last:border-b-0 last:pb-0 sm:border-b-0 sm:pb-0">
-      <span className="text-muted-foreground">{k}</span>
-      <span
-        className={[
-          'min-w-0 truncate text-right',
-          mono ? 'font-mono' : '',
-          small ? 'text-[11px]' : '',
-          accent === 'warn' ? 'font-semibold text-chart-5' : '',
-        ].join(' ')}
-        title={v}
-      >
-        {v}
-      </span>
-    </div>
-  )
-}
 
 function Sparkline({ points }: { points: number[] }) {
   if (points.length < 2) return <div className="h-full w-full" />
