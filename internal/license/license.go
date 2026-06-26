@@ -230,7 +230,7 @@ func ClearLicense() error {
 // Until it's replaced, every key the signing server emits with the
 // matching private half will validate â€” useful for local testing of
 // the UI flow.
-const licenseSigningPubKeyHex = "d5da5f1a7c01d8b9a4f8b04c91d6b81fe2c5b6e83a47c14ad07cf6e3b5a4f9b7"
+const licenseSigningPubKeyHex = "ece7a6679439611c63acc2ac5cfd4bb7495c70b48034eb60a3666b9bc7632218"
 
 // ValidateKey verifies a license key and returns its parsed payload.
 //
