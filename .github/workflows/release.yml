@@ -98,9 +98,17 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: go build -ldflags "-X main.AppVersion=${GITHUB_REF_NAME#v}" -o build/bin/blueprint-svc.exe ./cmd/blueprint-svc
 
-      - name: Build blueprint-svc-linux
-        if: matrix.os == 'ubuntu-latest'
-        run: go build -ldflags "-X main.AppVersion=${GITHUB_REF_NAME#v}" -o build/bin/blueprint-svc-linux ./cmd/blueprint-svc
+      # Always cross-compile the Linux svc binary — it gets embedded
+      # into blueprint.exe via go:embed so the desktop app's push-
+      # install can SCP it to remote Linux hosts without a network
+      # round-trip. Run on every matrix OS so the wails build doesn't
+      # fail looking for the embedded asset.
+      - name: Cross-compile blueprint-svc-linux for embedding
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: go build -ldflags "-s -w -X main.AppVersion=${GITHUB_REF_NAME#v}" -o build/bin/blueprint-svc-linux ./cmd/blueprint-svc
 
       - name: Wails build
         run: |

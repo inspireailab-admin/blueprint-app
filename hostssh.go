@@ -24,10 +24,16 @@ import (
 	bpssh "github.com/inspireailab-admin/blueprint-app/internal/ssh"
 )
 
-// installerAssets embeds the install-linux.sh script so push-install
-// can SCP it to a fresh host without a network round-trip.
+// installerAssets embeds the install-linux.sh script AND a cross-
+// compiled blueprint-svc-linux binary so push-install can SCP both
+// to a fresh host without a network round-trip and without the user
+// having to pre-stage anything.
 //
-//go:embed installer/install-linux.sh
+// The svc binary is cross-compiled into build/bin/blueprint-svc-linux
+// before each wails build. See README → "Building" for the one-line
+// command. CI does this automatically in .github/workflows/release.yml.
+//
+//go:embed installer/install-linux.sh build/bin/blueprint-svc-linux
 var installerAssets embed.FS
 
 // HostProbeResult is what TestConnect reports back to the UI.
@@ -134,6 +140,11 @@ func (a *App) PushInstallHost(id string) PushInstallResult {
 		out.Error = fmt.Sprintf("read embedded install-linux.sh: %v", err)
 		return out
 	}
+	svcBin, err := installerAssets.ReadFile("build/bin/blueprint-svc-linux")
+	if err != nil {
+		out.Error = fmt.Sprintf("read embedded blueprint-svc-linux: %v", err)
+		return out
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -158,6 +169,16 @@ func (a *App) PushInstallHost(id string) PushInstallResult {
 		return out
 	}
 	defer client.Close()
+
+	// Ship the svc binary first so the install script finds it adjacent
+	// to itself (its lookup is `${here}/blueprint-svc-linux`).
+	remoteSvc := "/tmp/blueprint-svc-linux"
+	emit("stdout", fmt.Sprintf("[upload] sending blueprint-svc-linux (%d bytes) -> %s", len(svcBin), remoteSvc))
+	if err := client.WriteFile(ctx, remoteSvc, 0o755, svcBin); err != nil {
+		out.Error = "upload svc binary: " + err.Error()
+		emit("stderr", "[upload] "+err.Error())
+		return out
+	}
 
 	remoteScript := "/tmp/blueprint-install-linux.sh"
 	emit("stdout", "[upload] sending install-linux.sh -> "+remoteScript)
