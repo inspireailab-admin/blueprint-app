@@ -41,6 +41,8 @@ import { TrainCard } from './TrainCard'
 import { CalibrateExplorer } from '../calibrate/CalibrateExplorer'
 import { MaintainExplorer } from '../maintain/MaintainExplorer'
 import { HostsExplorer } from '../hosts/HostsExplorer'
+import { RemoteHostModels } from '../../wailsjs/go/main/App'
+import type { ActiveHost } from '../App'
 
 const POLL_MS = 2000
 const HISTORY_LEN = 60
@@ -62,6 +64,8 @@ type ServeConfig = {
 type Props = {
   /** Which sub-tab is active inside the dashboard. */
   section: DashboardSection
+  /** null = local machine, otherwise the connected remote host. */
+  activeHost: ActiveHost
   serveConfig: ServeConfig
   /** Called by Models cards' Serve buttons to pre-select a model
    *  before routing the user to the Add-LLM wizard. */
@@ -72,6 +76,7 @@ type Props = {
 
 export function DashboardExplorer({
   section,
+  activeHost,
   serveConfig,
   onSelectModel,
   onAddLLM,
@@ -176,16 +181,30 @@ export function DashboardExplorer({
   const currentServingId = serving ? svcInfo?.modelId : undefined
   const currentServingQuant = serving ? svcInfo?.quant : undefined
 
-  // Calibrate, Maintain, and Hosts are sub-tabs with their own full
-  // UIs — render them and bail, no system tiles or chat overlays.
+  // Hosts is the registry — same on every active host, so it stays
+  // available even when a remote is selected.
+  if (section === 'hosts') {
+    return <HostsExplorer />
+  }
+
+  // Remote-host-aware routing: for tabs that haven't been ported to
+  // talk to a remote svc yet, show a clear "local-only" message so
+  // the user isn't staring at stale local state thinking it's the
+  // remote.
+  if (activeHost) {
+    if (section === 'models') {
+      return <RemoteModelsCard host={activeHost} />
+    }
+    return <RemoteNotSupportedYet section={section} host={activeHost} />
+  }
+
+  // Calibrate + Maintain are sub-tabs with their own full UIs — render
+  // them and bail, no system tiles or chat overlays.
   if (section === 'calibrate') {
     return <CalibrateExplorer />
   }
   if (section === 'maintain') {
     return <MaintainExplorer />
-  }
-  if (section === 'hosts') {
-    return <HostsExplorer />
   }
 
   // Overview: at-a-glance — server state + system + GPU + insights.
@@ -576,6 +595,135 @@ function ModelsOnDiskCard({
         </ul>
       )}
     </section>
+  )
+}
+
+// ─── Remote views (host-aware) ──────────────────────────────────────────
+
+function RemoteModelsCard({ host }: { host: { id: string; label: string } }) {
+  const [data, setData] = useState<{ models: RemoteModel[] } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    setError(null)
+    setData(null)
+    void (async () => {
+      try {
+        const r = await RemoteHostModels(host.id)
+        if (alive) setData(r as { models: RemoteModel[] })
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [host.id])
+
+  const totalBytes = data?.models?.reduce((a, m) => a + m.bytesSize, 0) ?? 0
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <header className="border-b border-border px-6 py-4">
+        <h2 className="text-base font-semibold tracking-tight">Models on disk</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          What&apos;s installed on{' '}
+          <b className="text-foreground">{host.label}</b>
+          {data && (
+            <>
+              {' · '}
+              {data.models?.length ?? 0} model
+              {(data.models?.length ?? 0) === 1 ? '' : 's'} ·{' '}
+              {humanBytes(totalBytes)}
+            </>
+          )}
+        </p>
+      </header>
+      {loading ? (
+        <div className="px-6 py-8 text-sm text-muted-foreground">Loading…</div>
+      ) : error ? (
+        <div className="m-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs">
+          <p className="font-semibold text-destructive">Couldn&apos;t fetch remote models</p>
+          <p className="mt-1 font-mono text-[11px] text-destructive/80">{error}</p>
+        </div>
+      ) : !data?.models || data.models.length === 0 ? (
+        <div className="px-6 py-8 text-sm text-muted-foreground">
+          No models on this host yet. Push-install put the runtime in
+          place; pulling models onto the remote will come in B.5b.
+        </div>
+      ) : (
+        <ul className="divide-y divide-border">
+          {data.models.map((m) => (
+            <li
+              key={m.fileName}
+              className="grid grid-cols-[1fr_auto] items-center gap-4 px-6 py-4"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold tracking-tight">
+                  {m.displayName}
+                  <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+                    {m.quant}
+                  </span>
+                </p>
+                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                  {m.fileName}
+                </p>
+              </div>
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {humanBytes(m.bytesSize)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+type RemoteModel = {
+  id: string
+  displayName: string
+  quant: string
+  fileName: string
+  bytesSize: number
+}
+
+function RemoteNotSupportedYet({
+  section,
+  host,
+}: {
+  section: DashboardSection
+  host: { id: string; label: string }
+}) {
+  const label =
+    section === 'overview'
+      ? 'Overview'
+      : section === 'inference'
+        ? 'Inference'
+        : section === 'calibrate'
+          ? 'Calibrate'
+          : section === 'maintain'
+            ? 'Maintain'
+            : section
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-card p-8 text-center">
+      <p className="text-sm font-semibold tracking-tight">
+        {label} on remote hosts is coming next
+      </p>
+      <p className="mx-auto mt-2 max-w-md text-xs text-muted-foreground">
+        Right now this tab only renders local state. To see remote{' '}
+        <b className="text-foreground">{host.label}</b>&apos;s {label.toLowerCase()},
+        switch the host selector at the top back to{' '}
+        <b className="text-foreground">⌂ Local</b>, or use the Models tab
+        for what&apos;s on its disk. Phase B.5b makes Overview + Inference
+        host-aware.
+      </p>
+    </div>
   )
 }
 

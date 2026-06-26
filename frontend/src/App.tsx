@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
-import { InstalledModels, Version } from '../wailsjs/go/main/App'
-import type { main } from '../wailsjs/go/models'
+import {
+  InstalledModels,
+  IsHostConnected,
+  ListHosts,
+  Version,
+} from '../wailsjs/go/main/App'
+import type { hosts as hostsModel, main } from '../wailsjs/go/models'
 import { loadCatalog, findModel } from './planner/catalog'
 import { usePlannerState } from './planner/state'
 import type { Model } from './planner/types'
@@ -23,6 +28,16 @@ import { smallestQuant } from './planner/vram'
 
 type WizardStep = 'plan' | 'hardware' | 'deploy'
 
+/**
+ * ActiveHost = which machine the Dashboard's queries target.
+ *  - null = the local machine (default — every existing tab works)
+ *  - {id, label} = a connected remote host from the registry
+ *
+ * Set via the host selector in the title bar. Only hosts the GUI has
+ * an open SSH connection to appear in the selector.
+ */
+export type ActiveHost = { id: string; label: string } | null
+
 export function App() {
   // Start overlay shows on every launch as a full-screen welcome.
   const [showStart, setShowStart] = useState(true)
@@ -32,6 +47,12 @@ export function App() {
 
   // Which Dashboard sub-tab is showing.
   const [dashTab, setDashTab] = useState<DashboardTabId>('overview')
+
+  // Which host the Dashboard targets. null = local.
+  const [activeHost, setActiveHost] = useState<ActiveHost>(null)
+
+  // Hosts that are currently connected (for the host-selector dropdown).
+  const [connectedHosts, setConnectedHosts] = useState<hostsModel.Host[]>([])
 
   const [version, setVersion] = useState<main.VersionInfo | null>(null)
   const [versionError, setVersionError] = useState<string | null>(null)
@@ -63,6 +84,40 @@ export function App() {
         setCatalogError(err instanceof Error ? err.message : String(err)),
       )
   }, [])
+
+  // Poll which hosts are connected so the selector stays in sync with
+  // Connect / Disconnect actions on the Hosts tab. 4-second cadence
+  // is plenty — the user isn't reaching for the selector every second.
+  useEffect(() => {
+    let alive = true
+    const refreshConnected = async () => {
+      try {
+        const all = await ListHosts()
+        const live: hostsModel.Host[] = []
+        for (const h of all ?? []) {
+          if (await IsHostConnected(h.id)) {
+            live.push(h)
+          }
+        }
+        if (alive) {
+          setConnectedHosts(live)
+          // If the active host got disconnected from underneath us,
+          // drop back to local instead of pointing at a dead session.
+          if (activeHost && !live.some((h) => h.id === activeHost.id)) {
+            setActiveHost(null)
+          }
+        }
+      } catch {
+        // ignore — keep the last known list
+      }
+    }
+    void refreshConnected()
+    const id = setInterval(() => void refreshConnected(), 4000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [activeHost])
 
   const selectedModel = findModel(models ?? [], planner.selectedModelId)
 
@@ -97,6 +152,9 @@ export function App() {
       <TitleBar
         version={version}
         wizardActive={wizard !== null}
+        activeHost={activeHost}
+        connectedHosts={connectedHosts}
+        onSelectHost={setActiveHost}
         onAddLLM={() => setWizard('plan')}
         onCloseWizard={closeWizard}
         onGoToMaintain={() => {
@@ -125,6 +183,7 @@ export function App() {
               <DashboardSurface
                 active={dashTab}
                 onSelect={setDashTab}
+                activeHost={activeHost}
                 serveConfig={serveConfig}
                 onSelectModel={planner.selectModel}
                 onAddLLM={() => setWizard('plan')}
@@ -249,18 +308,24 @@ const DASH_TABS: { id: DashboardTabId; label: string }[] = [
 function DashboardSurface({
   active,
   onSelect,
+  activeHost,
   serveConfig,
   onSelectModel,
   onAddLLM,
 }: {
   active: DashboardTabId
   onSelect: (id: DashboardTabId) => void
+  activeHost: ActiveHost
   serveConfig: ServeConfig
   onSelectModel: (modelId: string) => void
   onAddLLM: () => void
 }) {
   return (
     <div>
+      {activeHost && (
+        <RemoteBanner host={activeHost} />
+      )}
+
       <nav
         role="tablist"
         aria-label="Dashboard"
@@ -290,10 +355,29 @@ function DashboardSurface({
 
       <DashboardExplorer
         section={active}
+        activeHost={activeHost}
         serveConfig={serveConfig}
         onSelectModel={onSelectModel}
         onAddLLM={onAddLLM}
       />
+    </div>
+  )
+}
+
+function RemoteBanner({ host }: { host: { id: string; label: string } }) {
+  return (
+    <div className="mb-3 flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+      <span
+        className="inline-block h-2 w-2 rounded-full bg-primary"
+        aria-hidden
+      />
+      <span>
+        Viewing remote host:{' '}
+        <b className="text-foreground">{host.label}</b>
+        <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+          {host.id}
+        </span>
+      </span>
     </div>
   )
 }
@@ -316,12 +400,18 @@ function CatalogError({ message }: { message: string }) {
 function TitleBar({
   version,
   wizardActive,
+  activeHost,
+  connectedHosts,
+  onSelectHost,
   onAddLLM,
   onCloseWizard,
   onGoToMaintain,
 }: {
   version: main.VersionInfo | null
   wizardActive: boolean
+  activeHost: ActiveHost
+  connectedHosts: hostsModel.Host[]
+  onSelectHost: (h: ActiveHost) => void
   onAddLLM: () => void
   onCloseWizard: () => void
   onGoToMaintain: () => void
@@ -338,6 +428,11 @@ function TitleBar({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <HostSelector
+            activeHost={activeHost}
+            connectedHosts={connectedHosts}
+            onSelectHost={onSelectHost}
+          />
           {wizardActive ? (
             <button
               type="button"
@@ -372,6 +467,46 @@ function TitleBar({
         />
       )}
     </>
+  )
+}
+
+function HostSelector({
+  activeHost,
+  connectedHosts,
+  onSelectHost,
+}: {
+  activeHost: ActiveHost
+  connectedHosts: hostsModel.Host[]
+  onSelectHost: (h: ActiveHost) => void
+}) {
+  // Only render when at least one remote host is connected — otherwise
+  // there's nothing to pick BETWEEN and the chrome stays clean.
+  if (connectedHosts.length === 0 && activeHost === null) {
+    return null
+  }
+  const value = activeHost?.id ?? 'local'
+  return (
+    <select
+      aria-label="Active host"
+      value={value}
+      onChange={(e) => {
+        const id = e.target.value
+        if (id === 'local') {
+          onSelectHost(null)
+          return
+        }
+        const h = connectedHosts.find((h) => h.id === id)
+        if (h) onSelectHost({ id: h.id, label: h.label })
+      }}
+      className="rounded-md border border-border bg-background px-2 py-1 text-xs font-medium transition hover:bg-muted"
+    >
+      <option value="local">⌂ Local</option>
+      {connectedHosts.map((h) => (
+        <option key={h.id} value={h.id}>
+          ⌥ {h.label}
+        </option>
+      ))}
+    </select>
   )
 }
 
