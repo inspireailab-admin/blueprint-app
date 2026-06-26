@@ -20,11 +20,46 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/engines"
+	"github.com/inspireailab-admin/blueprint-app/internal/svcapi"
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
 )
+
+// AppVersion is overridden at build time via
+//
+//	-ldflags "-X main.AppVersion=0.2.x"
+//
+// Falls back to "dev" for unversioned local builds.
+var AppVersion = "dev"
+
+// apiStarted ensures we never bind the control-plane port twice if the
+// supervisor loop happens to re-run (which it doesn't today, but safer
+// to be idempotent).
+var apiStarted atomic.Bool
+
+// startAPIOnce launches the HTTP control plane in a background goroutine.
+// Best-effort — if the port is already bound (another blueprint-svc
+// instance? a curious user?) we log and keep going; the supervisor's
+// llama-server duties don't depend on the API.
+func startAPIOnce() {
+	if !apiStarted.CompareAndSwap(false, true) {
+		return
+	}
+	server, err := svcapi.New(AppVersion)
+	if err != nil {
+		log.Printf("svcapi: %v", err)
+		return
+	}
+	log.Printf("svcapi: control plane bound on 127.0.0.1:%d", svcapi.DefaultPort)
+	go func() {
+		if err := server.ListenAndServe(0); err != nil {
+			log.Printf("svcapi: serve exited: %v", err)
+		}
+	}()
+}
 
 // runSupervisor is the actual loop. Returns when ctx is cancelled.
 //
@@ -36,6 +71,7 @@ type runSupervisorOpts struct {
 }
 
 func runSupervisor(ctx context.Context, opts runSupervisorOpts) {
+	startAPIOnce()
 	writeStatus(svcconfig.Status{Phase: "idle"})
 
 	var restartCount int
