@@ -17,7 +17,7 @@
 // StartMonitoring is idempotent on the Go side, so Monitor + Dashboard
 // can both be mounted without doubling the polling rate.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   CurrentServeConfig,
   InstalledModels,
@@ -41,7 +41,12 @@ import { TrainCard } from './TrainCard'
 import { CalibrateExplorer } from '../calibrate/CalibrateExplorer'
 import { MaintainExplorer } from '../maintain/MaintainExplorer'
 import { HostsExplorer } from '../hosts/HostsExplorer'
-import { RemoteHostModels } from '../../wailsjs/go/main/App'
+import {
+  RemoteHostInfo,
+  RemoteHostModels,
+  RemoteHostServe,
+  RemoteHostStop,
+} from '../../wailsjs/go/main/App'
 import type { ActiveHost } from '../App'
 
 const POLL_MS = 2000
@@ -187,11 +192,14 @@ export function DashboardExplorer({
     return <HostsExplorer />
   }
 
-  // Remote-host-aware routing: for tabs that haven't been ported to
-  // talk to a remote svc yet, show a clear "local-only" message so
-  // the user isn't staring at stale local state thinking it's the
-  // remote.
+  // Remote-host-aware routing: each ported section gets its own
+  // remote view. Tabs we haven't ported yet (Inference, Calibrate,
+  // Maintain) get a clear "switch back to local" stub so the user
+  // isn't staring at stale local state thinking it's the remote.
   if (activeHost) {
+    if (section === 'overview') {
+      return <RemoteOverview host={activeHost} />
+    }
     if (section === 'models') {
       return <RemoteModelsCard host={activeHost} />
     }
@@ -599,6 +607,382 @@ function ModelsOnDiskCard({
 }
 
 // ─── Remote views (host-aware) ──────────────────────────────────────────
+
+type RemoteInfo = {
+  appVersion?: string
+  apiVersion?: string
+  host?: string
+  os?: string
+  arch?: string
+  status?: {
+    phase?: string
+    modelId?: string
+    quant?: string
+    port?: number
+    bindHost?: string
+    pid?: number
+    startedAtMs?: number
+    restartCount?: number
+    lastError?: string
+  }
+}
+
+type StartFormState = {
+  open: boolean
+  modelPath: string
+  quant: string
+  ctxSize: number
+  nGpuLayers: number
+  busy: boolean
+  error: string | null
+}
+
+const EMPTY_START: StartFormState = {
+  open: false,
+  modelPath: '',
+  quant: '',
+  ctxSize: 4096,
+  nGpuLayers: 999,
+  busy: false,
+  error: null,
+}
+
+function RemoteOverview({
+  host,
+}: {
+  host: { id: string; label: string }
+}) {
+  const [info, setInfo] = useState<RemoteInfo | null>(null)
+  const [infoError, setInfoError] = useState<string | null>(null)
+  const [models, setModels] = useState<RemoteModel[] | null>(null)
+  const [start, setStart] = useState<StartFormState>(EMPTY_START)
+
+  // Poll /v1/info every 3 s so phase + restart count stay live.
+  useEffect(() => {
+    let alive = true
+    const tick = async () => {
+      try {
+        const r = await RemoteHostInfo(host.id)
+        if (alive) {
+          setInfo(r as RemoteInfo)
+          setInfoError(null)
+        }
+      } catch (err) {
+        if (alive) {
+          setInfoError(err instanceof Error ? err.message : String(err))
+        }
+      }
+    }
+    void tick()
+    const id = setInterval(() => void tick(), 3000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [host.id])
+
+  // Fetch the remote model list once so the Start form has something
+  // to pick from. Refreshed when the user opens the form.
+  const fetchModels = useCallback(async () => {
+    try {
+      const r = await RemoteHostModels(host.id)
+      const m = (r as { models?: RemoteModel[] }).models ?? []
+      setModels(m)
+    } catch {
+      setModels([])
+    }
+  }, [host.id])
+
+  useEffect(() => {
+    void fetchModels()
+  }, [fetchModels])
+
+  async function submitStart() {
+    if (!start.modelPath) {
+      setStart((s) => ({ ...s, error: 'Pick a model first.' }))
+      return
+    }
+    setStart((s) => ({ ...s, busy: true, error: null }))
+    try {
+      await RemoteHostServe(host.id, {
+        modelPath: start.modelPath,
+        quant: start.quant,
+        ctxSize: start.ctxSize,
+        nGpuLayers: start.nGpuLayers,
+      })
+      setStart(EMPTY_START)
+    } catch (err) {
+      setStart((s) => ({
+        ...s,
+        busy: false,
+        error: err instanceof Error ? err.message : String(err),
+      }))
+    }
+  }
+
+  async function submitStop() {
+    if (!confirm(`Stop the running model on ${host.label}?`)) return
+    try {
+      await RemoteHostStop(host.id)
+    } catch (err) {
+      console.error('RemoteHostStop failed:', err)
+    }
+  }
+
+  const phase = info?.status?.phase ?? 'unknown'
+  const isRunning = phase === 'running'
+  const isIdle = phase === 'idle' || phase === 'stopped' || phase === 'unknown'
+
+  return (
+    <div className="space-y-4">
+      {/* Server card */}
+      <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold tracking-tight">
+              Server on{' '}
+              <span className="text-primary">{host.label}</span>
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Live from <code className="font-mono">/v1/info</code>, polled
+              every 3 s. Start / Stop write a new svcconfig on the remote
+              and the supervisor picks it up within ~5 s.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {isRunning ? (
+              <button
+                type="button"
+                onClick={() => void submitStop()}
+                className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-1.5 text-xs font-semibold text-destructive transition hover:bg-destructive/10"
+              >
+                Stop server
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  void fetchModels()
+                  setStart((s) => ({ ...s, open: !s.open }))
+                }}
+                className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
+              >
+                {start.open ? '✕ Cancel' : '+ Start a model'}
+              </button>
+            )}
+          </div>
+        </header>
+
+        <div className="grid gap-4 px-6 py-4 sm:grid-cols-2">
+          <KV2 k="Phase" v={<PhasePill phase={phase} />} />
+          <KV2
+            k="App version"
+            v={info?.appVersion ?? '—'}
+            mono
+          />
+          <KV2
+            k="OS / arch"
+            v={info ? `${info.os ?? '?'} / ${info.arch ?? '?'}` : '—'}
+            mono
+          />
+          <KV2 k="Hostname" v={info?.host ?? '—'} mono />
+          {isRunning && (
+            <>
+              <KV2 k="Model" v={info?.status?.modelId ?? '—'} mono />
+              <KV2 k="Quant" v={info?.status?.quant ?? '—'} mono />
+              <KV2
+                k="Bound at"
+                v={
+                  info?.status?.bindHost && info?.status?.port
+                    ? `${info.status.bindHost}:${info.status.port}`
+                    : '—'
+                }
+                mono
+              />
+              <KV2 k="PID" v={String(info?.status?.pid ?? '—')} mono />
+            </>
+          )}
+          {info?.status?.lastError && (
+            <KV2
+              k="Last error"
+              v={info.status.lastError}
+              mono
+              accent="warn"
+            />
+          )}
+        </div>
+
+        {infoError && (
+          <div className="border-t border-border bg-destructive/5 px-6 py-3 text-xs">
+            <p className="font-mono text-destructive/80">
+              poll error: {infoError}
+            </p>
+          </div>
+        )}
+
+        {start.open && isIdle && (
+          <div className="border-t border-border bg-muted/30 px-6 py-4">
+            <p className="text-xs font-semibold tracking-tight">
+              Start a model on {host.label}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              POSTs to <code className="font-mono">/v1/serve</code>. The
+              remote supervisor reads the new config and respawns llama-
+              server against it. Only models already on the remote&apos;s
+              disk show up here.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-[2fr_1fr_1fr_1fr]">
+              <label className="block">
+                <span className="text-xs font-medium">Model</span>
+                <select
+                  value={start.modelPath}
+                  onChange={(e) => {
+                    const path = e.target.value
+                    const m = models?.find((m) => m.fileName === path)
+                    setStart((s) => ({
+                      ...s,
+                      modelPath: path,
+                      quant: m?.quant ?? s.quant,
+                    }))
+                  }}
+                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+                >
+                  <option value="">
+                    {models && models.length === 0
+                      ? '— no models on remote yet —'
+                      : '— select —'}
+                  </option>
+                  {models?.map((m) => (
+                    <option key={m.fileName} value={m.fileName}>
+                      {m.displayName} · {m.quant} · {humanBytes(m.bytesSize)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <NumField
+                label="Ctx size"
+                value={start.ctxSize}
+                onChange={(v) => setStart((s) => ({ ...s, ctxSize: v }))}
+              />
+              <NumField
+                label="GPU layers"
+                value={start.nGpuLayers}
+                onChange={(v) => setStart((s) => ({ ...s, nGpuLayers: v }))}
+                hint="999 = all"
+              />
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => void submitStart()}
+                  disabled={start.busy || !start.modelPath}
+                  className="w-full rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {start.busy ? 'Starting…' : 'Start'}
+                </button>
+              </div>
+            </div>
+            {start.error && (
+              <p className="mt-2 text-xs text-destructive">{start.error}</p>
+            )}
+          </div>
+        )}
+      </section>
+
+      <NotPortedYet
+        message="System tiles (CPU / RAM / VRAM history) and GPU breakdown for remote hosts land in B.5c. The svc's /v1/snapshot returns host/os/arch today; richer monitor data needs a streaming endpoint."
+      />
+    </div>
+  )
+}
+
+function PhasePill({ phase }: { phase: string }) {
+  const tone =
+    phase === 'running'
+      ? 'bg-chart-4/15 text-chart-4'
+      : phase === 'crashed'
+        ? 'bg-destructive/15 text-destructive'
+        : 'bg-muted text-muted-foreground'
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] ${tone}`}
+    >
+      {phase === 'running' && (
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-chart-4" />
+      )}
+      {phase}
+    </span>
+  )
+}
+
+function KV2({
+  k,
+  v,
+  mono,
+  accent,
+}: {
+  k: string
+  v: React.ReactNode
+  mono?: boolean
+  accent?: 'warn'
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-xs text-muted-foreground">{k}</span>
+      <span
+        className={[
+          'min-w-0 truncate text-right text-sm',
+          mono ? 'font-mono text-xs' : '',
+          accent === 'warn' ? 'font-semibold text-chart-5' : '',
+        ].join(' ')}
+        title={typeof v === 'string' ? v : undefined}
+      >
+        {v}
+      </span>
+    </div>
+  )
+}
+
+function NumField({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string
+  value: number
+  onChange: (v: number) => void
+  hint?: string
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium">{label}</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={String(value)}
+        onChange={(e) => {
+          const n = parseInt(e.target.value, 10)
+          onChange(Number.isFinite(n) ? n : 0)
+        }}
+        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+      />
+      {hint && (
+        <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
+      )}
+    </label>
+  )
+}
+
+function NotPortedYet({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-dashed border-border bg-card/50 px-5 py-4 text-xs text-muted-foreground">
+      <p className="font-mono text-[10px] uppercase tracking-[0.14em]">
+        Coming next
+      </p>
+      <p className="mt-1.5">{message}</p>
+    </div>
+  )
+}
 
 function RemoteModelsCard({ host }: { host: { id: string; label: string } }) {
   const [data, setData] = useState<{ models: RemoteModel[] } | null>(null)
