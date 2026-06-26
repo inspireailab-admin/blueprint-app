@@ -96,7 +96,6 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showAdvanced, setShowAdvanced] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   /** Tracks the in-flight fetch so the user can stop a streaming response.
    *  Set on send(), aborted by stop(), cleared in the finally block. */
@@ -307,12 +306,7 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
         </div>
       </header>
 
-      <SamplingControls
-        params={params}
-        onChange={setParams}
-        showAdvanced={showAdvanced}
-        onToggleAdvanced={() => setShowAdvanced((v) => !v)}
-      />
+      <SamplingControls params={params} onChange={setParams} />
 
       <div
         ref={scrollRef}
@@ -444,28 +438,15 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
 function SamplingControls({
   params,
   onChange,
-  showAdvanced,
-  onToggleAdvanced,
 }: {
   params: SamplingParams
   onChange: (p: SamplingParams) => void
-  showAdvanced: boolean
-  onToggleAdvanced: () => void
 }) {
   return (
     <div className="border-b border-border bg-muted/20 px-6 py-4">
-      <div className="flex items-center justify-between">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-          Per-request — applied to the next message
-        </p>
-        <button
-          type="button"
-          onClick={onToggleAdvanced}
-          className="text-xs text-muted-foreground transition hover:text-foreground"
-        >
-          {showAdvanced ? 'Hide advanced' : 'Show advanced'}
-        </button>
-      </div>
+      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+        Per-request — applied to the next message
+      </p>
 
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <Slider
@@ -490,11 +471,9 @@ function SamplingControls({
         />
       </div>
 
-      {showAdvanced && (
-        <>
-          <p className="mt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-            Sampling
-          </p>
+      <p className="mt-5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+        Sampling
+      </p>
           <div className="mt-2 grid gap-4 sm:grid-cols-2">
             <Slider
               label="Top-k"
@@ -597,13 +576,11 @@ function SamplingControls({
             </label>
           </div>
 
-          <p className="mt-4 text-xs text-muted-foreground">
-            Need to change the <b>context window</b>, <b>quantization</b>, <b>GPU layers</b>,{' '}
-            <b>threads</b>, <b>batch size</b>, or <b>flash attention</b>? Those are server-startup
-            params — set them in the ServiceCard above and the service will restart cleanly.
-          </p>
-        </>
-      )}
+      <p className="mt-4 text-xs text-muted-foreground">
+        Need to change the <b>context window</b>, <b>quantization</b>, <b>GPU layers</b>,{' '}
+        <b>threads</b>, <b>batch size</b>, or <b>flash attention</b>? Those are server-startup
+        params — set them in the ServiceCard above and the service will restart cleanly.
+      </p>
     </div>
   )
 }
