@@ -25,6 +25,7 @@
 package svcapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -34,10 +35,14 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/inspireailab-admin/blueprint-cli/pkg/catalog"
 	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
@@ -224,27 +229,91 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"models": out})
 }
 
+type gpuEntry struct {
+	Index       int     `json:"index"`
+	Name        string  `json:"name"`
+	UtilPct     float64 `json:"utilPct"`
+	VramUsedMB  int64   `json:"vramUsedMB"`
+	VramTotalMB int64   `json:"vramTotalMB"`
+}
+
 type snapshotResponse struct {
-	Host          string  `json:"host"`
-	OS            string  `json:"os"`
-	Arch          string  `json:"arch"`
-	NumCPU        int     `json:"numCPU"`
-	GoVersion     string  `json:"goVersion"`
-	UptimeSeconds float64 `json:"uptimeSeconds"`
+	Host          string     `json:"host"`
+	OS            string     `json:"os"`
+	Arch          string     `json:"arch"`
+	NumCPU        int        `json:"numCPU"`
+	GoVersion     string     `json:"goVersion"`
+	UptimeSeconds float64    `json:"uptimeSeconds"`
+	CPUUtilPct    float64    `json:"cpuUtilPct"`
+	RAMUsedPct    float64    `json:"ramUsedPct"`
+	RAMUsedMB     int64      `json:"ramUsedMB"`
+	RAMTotalMB    int64      `json:"ramTotalMB"`
+	GPUs          []gpuEntry `json:"gpus"`
 }
 
 var svcStartedAt = time.Now()
 
-func (s *Server) handleSnapshot(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	host, _ := os.Hostname()
-	writeJSON(w, http.StatusOK, snapshotResponse{
+
+	out := snapshotResponse{
 		Host:          host,
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		NumCPU:        runtime.NumCPU(),
 		GoVersion:     runtime.Version(),
 		UptimeSeconds: time.Since(svcStartedAt).Seconds(),
-	})
+		GPUs:          []gpuEntry{},
+	}
+
+	// CPU: 0 duration → instantaneous (cumulative delta the lib has
+	// cached). First call returns 0 but subsequent calls (the GUI
+	// polls every 3s) return real numbers.
+	if pcts, err := cpu.PercentWithContext(r.Context(), 0, false); err == nil && len(pcts) > 0 {
+		out.CPUUtilPct = pcts[0]
+	}
+	if v, err := mem.VirtualMemoryWithContext(r.Context()); err == nil && v != nil {
+		out.RAMUsedPct = v.UsedPercent
+		out.RAMUsedMB = int64(v.Used / 1024 / 1024)
+		out.RAMTotalMB = int64(v.Total / 1024 / 1024)
+	}
+
+	out.GPUs = readNvidiaSmi(r.Context())
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// readNvidiaSmi shells out to nvidia-smi for the per-GPU snapshot.
+// Returns empty slice if nvidia-smi isn't installed or fails — the GUI
+// renders a "no GPUs detected" empty state.
+//
+// AMD ROCm + Apple Silicon paths land in a follow-up; for v1 nvidia
+// covers ~95% of the calibration / serving workload.
+func readNvidiaSmi(ctx context.Context) []gpuEntry {
+	out := []gpuEntry{}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "nvidia-smi",
+		"--query-gpu=index,name,utilization.gpu,memory.used,memory.total",
+		"--format=csv,noheader,nounits")
+	raw, err := cmd.Output()
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		fields := strings.Split(line, ",")
+		if len(fields) < 5 {
+			continue
+		}
+		var g gpuEntry
+		fmt.Sscanf(strings.TrimSpace(fields[0]), "%d", &g.Index)
+		g.Name = strings.TrimSpace(fields[1])
+		fmt.Sscanf(strings.TrimSpace(fields[2]), "%f", &g.UtilPct)
+		fmt.Sscanf(strings.TrimSpace(fields[3]), "%d", &g.VramUsedMB)
+		fmt.Sscanf(strings.TrimSpace(fields[4]), "%d", &g.VramTotalMB)
+		out = append(out, g)
+	}
+	return out
 }
 
 // handleServe accepts a partial svcconfig.Config payload and writes

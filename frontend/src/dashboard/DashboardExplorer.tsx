@@ -46,6 +46,7 @@ import {
   RemoteHostInfo,
   RemoteHostModels,
   RemoteHostServe,
+  RemoteHostSnapshot,
   RemoteHostStop,
 } from '../../wailsjs/go/main/App'
 import type { ActiveHost } from '../App'
@@ -892,9 +893,177 @@ function RemoteOverview({
         )}
       </section>
 
-      <NotPortedYet
-        message="System tiles (CPU / RAM / VRAM history) and GPU breakdown for remote hosts land in B.5c. The svc's /v1/snapshot returns host/os/arch today; richer monitor data needs a streaming endpoint."
-      />
+      <RemoteSystemTiles host={host} />
+    </div>
+  )
+}
+
+// Polls /v1/snapshot every 3 s for CPU% / RAM% / GPU details on the
+// remote host. Tries once on mount and then keeps an interval going.
+function RemoteSystemTiles({ host }: { host: { id: string; label: string } }) {
+  const [snap, setSnap] = useState<RemoteSnapshot | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    const tick = async () => {
+      try {
+        const r = await RemoteHostSnapshot(host.id)
+        if (alive) {
+          setSnap(r as RemoteSnapshot)
+          setError(null)
+        }
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : String(err))
+      }
+    }
+    void tick()
+    const id = setInterval(() => void tick(), 3000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [host.id])
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs">
+        <p className="font-mono text-destructive/80">
+          snapshot poll error: {error}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <PercentTile
+          label="CPU"
+          pct={snap?.cpuUtilPct ?? 0}
+          hint={snap ? `${snap.numCPU ?? 0} cores` : ''}
+        />
+        <PercentTile
+          label="RAM"
+          pct={snap?.ramUsedPct ?? 0}
+          hint={
+            snap?.ramTotalMB && snap?.ramUsedMB
+              ? `${(snap.ramUsedMB / 1024).toFixed(1)} / ${(snap.ramTotalMB / 1024).toFixed(1)} GB`
+              : ''
+          }
+        />
+      </div>
+
+      {snap && snap.gpus && snap.gpus.length > 0 && (
+        <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <header className="border-b border-border px-6 py-3">
+            <h3 className="text-sm font-semibold tracking-tight">GPUs</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Live from <code className="font-mono">nvidia-smi</code> on the
+              remote.
+            </p>
+          </header>
+          <ul className="divide-y divide-border">
+            {snap.gpus.map((g) => (
+              <li
+                key={g.index}
+                className="grid grid-cols-[auto_1fr_auto] items-center gap-4 px-6 py-3 text-sm"
+              >
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  GPU{g.index}
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate font-semibold tracking-tight">
+                    {g.name}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                    {g.utilPct.toFixed(0)}% util · {(g.vramUsedMB / 1024).toFixed(1)}{' '}
+                    / {(g.vramTotalMB / 1024).toFixed(1)} GB VRAM
+                  </p>
+                </div>
+                <PercentTile
+                  label=""
+                  pct={
+                    g.vramTotalMB > 0
+                      ? (g.vramUsedMB / g.vramTotalMB) * 100
+                      : 0
+                  }
+                  compact
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </section>
+  )
+}
+
+type RemoteSnapshot = {
+  host: string
+  os: string
+  arch: string
+  numCPU: number
+  cpuUtilPct: number
+  ramUsedPct: number
+  ramUsedMB: number
+  ramTotalMB: number
+  gpus: Array<{
+    index: number
+    name: string
+    utilPct: number
+    vramUsedMB: number
+    vramTotalMB: number
+  }>
+}
+
+function PercentTile({
+  label,
+  pct,
+  hint,
+  compact,
+}: {
+  label: string
+  pct: number
+  hint?: string
+  compact?: boolean
+}) {
+  const clamped = Math.max(0, Math.min(100, pct))
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="h-2 w-24 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-primary transition-all"
+            style={{ width: `${clamped}%` }}
+          />
+        </div>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {clamped.toFixed(0)}%
+        </span>
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-xl border border-border bg-card px-4 py-3">
+      <div className="flex items-baseline justify-between">
+        <p className="text-xs font-semibold">{label}</p>
+        <p className="font-mono text-lg font-semibold tracking-tight">
+          {clamped.toFixed(0)}
+          <span className="text-sm font-normal text-muted-foreground">%</span>
+        </p>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary transition-all"
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      {hint && (
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+          {hint}
+        </p>
+      )}
     </div>
   )
 }
@@ -977,16 +1146,6 @@ function NumField({
   )
 }
 
-function NotPortedYet({ message }: { message: string }) {
-  return (
-    <div className="rounded-xl border border-dashed border-border bg-card/50 px-5 py-4 text-xs text-muted-foreground">
-      <p className="font-mono text-[10px] uppercase tracking-[0.14em]">
-        Coming next
-      </p>
-      <p className="mt-1.5">{message}</p>
-    </div>
-  )
-}
 
 // ─── Remote chat (Inference tab) ────────────────────────────────────────
 
