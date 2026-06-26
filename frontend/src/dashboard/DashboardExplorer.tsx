@@ -172,6 +172,7 @@ export function DashboardExplorer({
   const hasModel = (installed?.length ?? 0) > 0
   const runtimeReady = !!runtime?.installed
   const currentServingId = serving ? svcInfo?.modelId : undefined
+  const currentServingQuant = serving ? svcInfo?.quant : undefined
 
   // Calibrate + Maintain are sub-tabs with their own full UIs — render
   // them and bail, no system tiles or chat overlays.
@@ -255,6 +256,7 @@ export function DashboardExplorer({
       <ModelsOnDiskCard
         installed={installed}
         currentServingId={currentServingId}
+        currentServingQuant={currentServingQuant}
         running={serving}
         onPickAnother={onAddLLM}
         onServe={(m) => {
@@ -476,6 +478,7 @@ function formatCompactNumber(n: number): string {
 function ModelsOnDiskCard({
   installed,
   currentServingId,
+  currentServingQuant,
   running,
   onPickAnother,
   onServe,
@@ -483,6 +486,7 @@ function ModelsOnDiskCard({
 }: {
   installed: main.InstalledModel[] | null
   currentServingId?: string
+  currentServingQuant?: string
   running: boolean
   onPickAnother: () => void
   onServe: (m: main.InstalledModel) => void
@@ -518,7 +522,15 @@ function ModelsOnDiskCard({
       ) : (
         <ul className="divide-y divide-border">
           {installed.map((m) => {
-            const isServing = running && currentServingId === m.id
+            // SERVING only matches the exact (model, quant) pair the
+            // service is running — two quants of the same model would
+            // otherwise both light up. Quant comparison is loose so
+            // "q4" matches "Q4_K_M" if the svc reports either format.
+            const isServing =
+              running &&
+              currentServingId === m.id &&
+              (currentServingQuant === undefined ||
+                quantsMatch(currentServingQuant, m.quant))
             return (
               <li
                 key={`${m.id}:${m.quant}`}
@@ -527,6 +539,9 @@ function ModelsOnDiskCard({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold tracking-tight">
                     {m.displayName}
+                    <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+                      {m.quant}
+                    </span>
                     {isServing && (
                       <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-chart-4/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-chart-4">
                         <span className="h-1.5 w-1.5 rounded-full bg-chart-4" />
@@ -679,6 +694,18 @@ function RecommendationsCard(props: {
 }
 
 // ─── Bits ───────────────────────────────────────────────────────────────
+
+/** Loose match for quant strings the svc and the installer use
+ *  inconsistently. "q4" matches "Q4_K_M", "q3" matches "Q3_K_L", etc.
+ *  We compare on the leading "q" + digit prefix. */
+function quantsMatch(a: string, b: string): boolean {
+  if (!a || !b) return false
+  const prefix = (s: string) => {
+    const m = s.toLowerCase().match(/^q(\d+)/)
+    return m ? `q${m[1]}` : s.toLowerCase()
+  }
+  return prefix(a) === prefix(b)
+}
 
 function Sparkline({ points }: { points: number[] }) {
   if (points.length < 2) return <div className="h-full w-full" />
