@@ -52,7 +52,7 @@ jobs:
             artifact_name: blueprint-linux-amd64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux Wails deps
         if: matrix.os == 'ubuntu-latest'
@@ -76,9 +76,9 @@ jobs:
           go-version: '1.23'
           cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       - run: npm install -g pnpm@10
 
@@ -172,7 +172,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact_name }}
           path: build/bin/${{ matrix.artifact_name }}
@@ -183,7 +183,7 @@ jobs:
       # already in installer/ pulls this and sudo-installs it.
       - name: Upload Linux service binary
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: blueprint-svc-linux-amd64
           path: build/bin/blueprint-svc-linux
@@ -194,10 +194,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts/
 
