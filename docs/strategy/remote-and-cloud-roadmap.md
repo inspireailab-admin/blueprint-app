@@ -68,53 +68,96 @@ can't ship either.
 
 **Estimate: ~1 week**. Pre-req for B onward.
 
-## Phase B — Remote Linux from the desktop GUI
+## Phase B — Remote Linux from the desktop GUI ✅ SHIPPED (2026-06-26)
 
 The user runs the desktop app on Windows / macOS, but the LLM runs on
 a Linux server they own (rented Hetzner box, on-prem rack, home
 server). This is the most common ask from solo consultants and small
 platform teams.
 
-**B1. SSH connection manager**
-- New "Hosts" sidebar in the desktop GUI
-- Add Host UX: SSH endpoint (user@host:port), key path, label, role
-  (dev / prod / shared)
-- Stored at `~/.blueprint/hosts.json` (same pattern as remotes.json)
-- Connection test: SSH + run `uname -a` + report kernel + GPU detect
+End-to-end flow now works: add host → push-install → connect → see
+live status → start a model → chat with it. From a Windows laptop you
+can stand up and drive a model on a remote Linux box without opening
+a terminal.
 
-**B2. SSH push-install**
-- "Install Blueprint on this host" button — SSH execs the install
-  script (the same `install-linux.sh` we already serve from
-  `llmblueprint.ai/install.sh`)
-- Progress: download → install runtime → enable systemd unit → start
-- Captures stdout/stderr back to the GUI in real time
+**B.1 — Hosts registry + sidebar** ✅ shipped commit `bc51ae8`
+- `internal/hosts` package mirrors `internal/remotes`. Persists to
+  `~/.blueprint/hosts.json` (label, user, host, port, key path, role,
+  provenance, last-seen).
+- New Hosts sub-tab in the Dashboard with add form, role badges, empty
+  state, and per-row Remove.
 
-**B3. Remote svc control plane API**
-- `blueprint-svc` exposes a small authenticated control API on
-  loopback by default; the SSH tunnel from the GUI is what makes it
-  reachable
-- Ed25519 mTLS pinned per host (the GUI generates a keypair per
-  host, the install script registers the pubkey on the host) — same
-  trust model as SSH itself
-- Operations: list/load/unload model, start/stop server, scrape
-  metrics, fetch logs, restart svc
+**B.2 — SSH connect + test-connect + push-install** ✅ shipped commit `99a1bce`
+- `internal/ssh` wraps `golang.org/x/crypto/ssh`: Dial with key-file
+  OR ssh-agent auth, Run, RunStream with per-line callbacks, WriteFile
+  via `tee`, ReadFile via `cat`, DialTCP for tunneling.
+- Test connect: SSH session, `uname -a`, `/etc/os-release`, `nproc`,
+  `MemTotal`, optional `nvidia-smi`. Updates LastSeenAtMs on success.
+- Push-install: SCPs install-linux.sh and the embedded
+  blueprint-svc-linux binary to /tmp, runs under sudo, streams output
+  via the `host:install:line` Wails event.
 
-**B4. Remote-aware Dashboard**
-- Single Dashboard view, host selector dropdown at the top
-- All the existing tabs (Plan, Hardware, Deploy, Calibrate, Maintain)
-  parametrize on the selected host — local is the default
-- "Deploy on this host" replaces "Deploy locally" when a remote host
-  is selected; the install/model-pull commands proxy through the SSH
-  tunnel
+**B.3 — Bearer-auth HTTP control plane on blueprint-svc** ✅ shipped commits `a353338` + `35bd91f`
+- 127.0.0.1:17832 only — never the public interface. Bearer token
+  persisted at `~/.blueprint/svc-token` (0600). Same trust model as
+  docker.sock.
+- Read endpoints: `/v1/health`, `/v1/info` (svc status + host
+  metadata), `/v1/models` (.gguf on disk, catalog-cross-referenced
+  for display names).
+- Write endpoints: `/v1/serve` (POST a partial svcconfig.Config; the
+  supervisor picks up the new config in ~5s) and `/v1/stop` (delete
+  config; supervisor stops the child).
+- Snapshot endpoint: `/v1/snapshot` returns CPU%, RAM% used/total,
+  per-GPU snapshot via `nvidia-smi`. gopsutil for CPU/RAM.
+- `/llama/*` reverse-proxy to the supervised llama-server with auto-
+  injected APIKey. SSE-friendly flush interval so streamed chat
+  travels through unmodified.
 
-**B5. Auth + secrets**
-- Host registry encrypted at rest (OS keychain — DPAPI on Windows,
-  Keychain on macOS, libsecret on Linux)
-- Per-host bearer tokens for the svc control plane never touch disk
-  unencrypted
+**B.4 — SSH-tunneled svc client + Connect button** ✅ shipped commit `1ab6b9a`
+- `internal/svcclient`: http.Client with a custom Transport.DialContext
+  routing through the SSH connection. From caller code it looks like a
+  normal HTTP client; under the hood every byte goes through the same
+  SSH session.
+- ConnectHost dials SSH, `cat`s the svc token, hits `/v1/health` to
+  confirm the control plane is alive. Disconnect closes both.
+- Pool keyed by host ID — at most one connection per registered host.
+  IsHostConnected lets the UI restore per-host pill state on mount.
 
-**Estimate: ~3-4 weeks**. Unlocks the "consultant managing a client's
-on-prem box" persona — the single biggest TAM lift available.
+**B.5 — Host selector + remote-aware Dashboard** ✅ shipped commits `95985ea` + `f345426` + `06d2392` + `12101fb` + `23b1c88`
+- Host selector dropdown in the title bar (Local + each connected
+  host). Banner above the Dashboard so the user can't lose track of
+  which host they're operating on.
+- Overview: live `/v1/info` poll, server card with Phase + model +
+  PID + bind address, Start a model (picker pulls from
+  RemoteHostModels) → POST `/v1/serve`, Stop → POST `/v1/stop`. Live
+  system tiles for CPU% + RAM% + per-GPU utilization and VRAM.
+- Models: lists everything on the remote's disk (catalog-matched
+  display name + quant pill + file size).
+- Inference: streamed chat via `/llama/*` proxy. SSE chunks arrive
+  through the SSH tunnel and the assistant message updates in place.
+  Full sampling controls (temp, max tokens, top-k, top-p, min-p,
+  repeat, presence, frequency, seed, stops, system prompt).
+
+**B.6 — Embed blueprint-svc-linux in the desktop app** ✅ shipped commit `e837d7c`
+- Cross-compiled svc binary embedded via `go:embed` so push-install
+  works without the user pre-staging anything. CI cross-compiles on
+  every matrix OS so the wails build always finds the embedded asset.
+
+**Deferred from the original scope**
+
+The original B5 ("Auth + secrets") was scoped to OS-keychain
+encryption (DPAPI / macOS Keychain / libsecret) for the host registry.
+We landed somewhere defensible without it for v1: the registry only
+stores **non-secret** material (label, user, host, port, *path* to
+key file, role) — same trust model as `~/.ssh/config`. The svc bearer
+token is fetched fresh per session via SSH `cat ~/.blueprint/svc-token`
+and held in memory in the svcclient.Client; on Disconnect the client
+is GC'd and the token goes with it. Nothing secret touches the host
+registry on disk.
+
+Keychain integration is still worth doing — would let the GUI **remember**
+the svc token between sessions instead of re-fetching every Connect —
+but it's not blocking shipping.
 
 ## Phase C — Cloud GPU provisioning
 
