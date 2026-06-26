@@ -40,6 +40,7 @@ import { ServiceCard } from './ServiceCard'
 import { TrainCard } from './TrainCard'
 import { CalibrateExplorer } from '../calibrate/CalibrateExplorer'
 import { MaintainExplorer } from '../maintain/MaintainExplorer'
+import { HostsExplorer } from '../hosts/HostsExplorer'
 
 const POLL_MS = 2000
 const HISTORY_LEN = 60
@@ -48,6 +49,7 @@ export type DashboardSection =
   | 'overview'
   | 'inference'
   | 'models'
+  | 'hosts'
   | 'calibrate'
   | 'maintain'
 
@@ -174,13 +176,16 @@ export function DashboardExplorer({
   const currentServingId = serving ? svcInfo?.modelId : undefined
   const currentServingQuant = serving ? svcInfo?.quant : undefined
 
-  // Calibrate + Maintain are sub-tabs with their own full UIs — render
-  // them and bail, no system tiles or chat overlays.
+  // Calibrate, Maintain, and Hosts are sub-tabs with their own full
+  // UIs — render them and bail, no system tiles or chat overlays.
   if (section === 'calibrate') {
     return <CalibrateExplorer />
   }
   if (section === 'maintain') {
     return <MaintainExplorer />
+  }
+  if (section === 'hosts') {
+    return <HostsExplorer />
   }
 
   // Overview: at-a-glance — server state + system + GPU + insights.
