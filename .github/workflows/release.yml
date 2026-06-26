@@ -96,11 +96,11 @@ jobs:
       # variant we want to attach to the release.
       - name: Build blueprint-svc
         if: matrix.os == 'windows-latest'
-        run: go build -o build/bin/blueprint-svc.exe ./cmd/blueprint-svc
+        run: go build -ldflags "-X main.AppVersion=${GITHUB_REF_NAME#v}" -o build/bin/blueprint-svc.exe ./cmd/blueprint-svc
 
       - name: Build blueprint-svc-linux
         if: matrix.os == 'ubuntu-latest'
-        run: go build -o build/bin/blueprint-svc-linux ./cmd/blueprint-svc
+        run: go build -ldflags "-X main.AppVersion=${GITHUB_REF_NAME#v}" -o build/bin/blueprint-svc-linux ./cmd/blueprint-svc
 
       - name: Wails build
         run: |
