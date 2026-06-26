@@ -229,12 +229,19 @@ function WizardSurface({
 
 // ─── Dashboard surface ─────────────────────────────────────────────
 
-type DashboardTabId = 'overview' | 'inference' | 'models' | 'calibrate' | 'maintain'
+type DashboardTabId =
+  | 'overview'
+  | 'inference'
+  | 'models'
+  | 'hosts'
+  | 'calibrate'
+  | 'maintain'
 
 const DASH_TABS: { id: DashboardTabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'inference', label: 'Inference' },
   { id: 'models', label: 'Models' },
+  { id: 'hosts', label: 'Hosts' },
   { id: 'calibrate', label: 'Calibrate' },
   { id: 'maintain', label: 'Maintain' },
 ]
