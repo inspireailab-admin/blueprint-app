@@ -33,6 +33,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      # blueprint-cli is private. Configure git so Go module fetch uses
+      # the KERNEL_ACCESS_TOKEN secret (a fine-grained PAT scoped to
+      # read inspireailab-admin/blueprint-cli), and tell Go this is a
+      # private module so it skips the public sumdb lookup.
+      - name: Configure private kernel auth
+        env:
+          KERNEL_TOKEN: ${{ secrets.KERNEL_ACCESS_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${KERNEL_TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "GOPRIVATE=github.com/inspireailab-admin/*" >> $GITHUB_ENV
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
