@@ -107,6 +107,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/v1/info", s.auth(s.handleInfo))
 	mux.HandleFunc("/v1/models", s.auth(s.handleModels))
 	mux.HandleFunc("/v1/snapshot", s.auth(s.handleSnapshot))
+	mux.HandleFunc("/v1/serve", s.auth(s.handleServe))
+	mux.HandleFunc("/v1/stop", s.auth(s.handleStop))
 	return mux
 }
 
@@ -235,6 +237,80 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, _ *http.Request) {
 		NumCPU:        runtime.NumCPU(),
 		GoVersion:     runtime.Version(),
 		UptimeSeconds: time.Since(svcStartedAt).Seconds(),
+	})
+}
+
+// handleServe accepts a partial svcconfig.Config payload and writes
+// it to the config file. The supervisor goroutine notices the new
+// UpdatedAt timestamp within ~5 seconds and respawns llama-server
+// against the new config.
+//
+// Optional fields not set in the request inherit from the previous
+// config — convenient for "swap the model without re-sending every
+// flag" calls from the GUI.
+func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST only"})
+		return
+	}
+	var in svcconfig.Config
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	if in.ModelPath == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "modelPath is required"})
+		return
+	}
+
+	// Merge with current config so callers can send a partial patch.
+	if prev, err := svcconfig.ReadConfig(); err == nil && prev != nil {
+		if in.LlamaServerBin == "" {
+			in.LlamaServerBin = prev.LlamaServerBin
+		}
+		if in.BindHost == "" {
+			in.BindHost = prev.BindHost
+		}
+		if in.Port == 0 {
+			in.Port = prev.Port
+		}
+		if in.APIKey == "" {
+			in.APIKey = prev.APIKey
+		}
+	}
+	if in.BindHost == "" {
+		in.BindHost = "127.0.0.1"
+	}
+	if in.Port == 0 {
+		in.Port = 8080
+	}
+	in.UpdatedAt = time.Now().UnixMilli()
+	if err := svcconfig.WriteConfig(in); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accepted":  true,
+		"updatedAt": in.UpdatedAt,
+		"note":      "supervisor picks up the new config within ~5s",
+	})
+}
+
+// handleStop deletes the config file. The supervisor sees the missing
+// file on its next iteration and goes idle (which terminates the
+// llama-server child).
+func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST only"})
+		return
+	}
+	if err := svcconfig.DeleteConfig(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete config: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accepted": true,
+		"note":     "supervisor will stop the child within ~5s",
 	})
 }
 

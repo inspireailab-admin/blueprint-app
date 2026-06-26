@@ -11,6 +11,7 @@
 package svcclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -121,25 +122,68 @@ func (c *Client) Snapshot(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
+// Serve POSTs a svcconfig.Config payload (or a partial patch) to
+// /v1/serve. The remote supervisor picks up the new config within
+// ~5 seconds and respawns llama-server against it.
+func (c *Client) Serve(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	var out map[string]any
+	if err := c.post(ctx, "/v1/serve", payload, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Stop POSTs to /v1/stop. The remote supervisor deletes the config
+// and stops the child within ~5 seconds.
+func (c *Client) Stop(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	if err := c.post(ctx, "/v1/stop", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ─── Plumbing ───────────────────────────────────────────────────────
 
 func (c *Client) get(ctx context.Context, path string, into any) error {
+	return c.do(ctx, http.MethodGet, path, nil, into)
+}
+
+func (c *Client) post(ctx context.Context, path string, body any, into any) error {
+	return c.do(ctx, http.MethodPost, path, body, into)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body any, into any) error {
+	var bodyReader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		bodyReader = bytes.NewReader(raw)
+	}
 	// Host header doesn't matter since the transport ignores it, but
 	// net/url requires a parseable URL.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"http://blueprint-svc"+path, nil)
+	req, err := http.NewRequestWithContext(ctx, method,
+		"http://blueprint-svc"+path, bodyReader)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("svc HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("svc HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	if into == nil {
+		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(into)
 }

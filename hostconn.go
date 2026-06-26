@@ -143,3 +143,28 @@ func (a *App) RemoteHostSnapshot(id string) (map[string]any, error) {
 	defer cancel()
 	return c.Snapshot(ctx)
 }
+
+// RemoteHostServe POSTs to the host's /v1/serve. payload is a
+// (partial) svcconfig.Config — modelPath is required, the supervisor
+// merges other fields with the previous config on the remote side.
+func (a *App) RemoteHostServe(id string, payload map[string]any) (map[string]any, error) {
+	c, ok := getHostClient(id)
+	if !ok {
+		return nil, fmt.Errorf("not connected — call ConnectHost first")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return c.Serve(ctx, payload)
+}
+
+// RemoteHostStop POSTs to the host's /v1/stop. The remote supervisor
+// removes the config and stops the running child within ~5s.
+func (a *App) RemoteHostStop(id string) (map[string]any, error) {
+	c, ok := getHostClient(id)
+	if !ok {
+		return nil, fmt.Errorf("not connected — call ConnectHost first")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return c.Stop(ctx)
+}
