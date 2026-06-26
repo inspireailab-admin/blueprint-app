@@ -30,7 +30,8 @@ import {
   StopMonitoring,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import type { main, svcconfig } from '../../wailsjs/go/models'
+import type { svcconfig } from '../../wailsjs/go/models'
+import { main } from '../../wailsjs/go/models'
 import { DashboardChat } from './DashboardChat'
 import { PromptCacheCard } from './PromptCacheCard'
 import { PythonRuntimeCard } from './PythonRuntimeCard'
@@ -42,6 +43,7 @@ import { CalibrateExplorer } from '../calibrate/CalibrateExplorer'
 import { MaintainExplorer } from '../maintain/MaintainExplorer'
 import { HostsExplorer } from '../hosts/HostsExplorer'
 import {
+  RemoteChat,
   RemoteHostInfo,
   RemoteHostModels,
   RemoteHostServe,
@@ -193,15 +195,18 @@ export function DashboardExplorer({
   }
 
   // Remote-host-aware routing: each ported section gets its own
-  // remote view. Tabs we haven't ported yet (Inference, Calibrate,
-  // Maintain) get a clear "switch back to local" stub so the user
-  // isn't staring at stale local state thinking it's the remote.
+  // remote view. Tabs we haven't ported yet (Calibrate, Maintain)
+  // get a clear "switch back to local" stub so the user isn't
+  // staring at stale local state thinking it's the remote.
   if (activeHost) {
     if (section === 'overview') {
       return <RemoteOverview host={activeHost} />
     }
     if (section === 'models') {
       return <RemoteModelsCard host={activeHost} />
+    }
+    if (section === 'inference') {
+      return <RemoteChatCard host={activeHost} />
     }
     return <RemoteNotSupportedYet section={section} host={activeHost} />
   }
@@ -980,6 +985,152 @@ function NotPortedYet({ message }: { message: string }) {
         Coming next
       </p>
       <p className="mt-1.5">{message}</p>
+    </div>
+  )
+}
+
+// ─── Remote chat (Inference tab) ────────────────────────────────────────
+
+type ChatMsg = { role: 'user' | 'assistant'; content: string }
+
+function RemoteChatCard({ host }: { host: { id: string; label: string } }) {
+  const [messages, setMessages] = useState<ChatMsg[]>([])
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [temperature, setTemperature] = useState(0.7)
+  const [maxTokens, setMaxTokens] = useState(512)
+
+  async function send() {
+    const text = input.trim()
+    if (!text || sending) return
+    const next: ChatMsg[] = [...messages, { role: 'user', content: text }]
+    setMessages(next)
+    setInput('')
+    setSending(true)
+    setError(null)
+    try {
+      const result = await RemoteChat(host.id, main.RemoteChatRequest.createFrom({
+        model: 'local',
+        messages: next,
+        maxTokens,
+        temperature,
+      }))
+      if (result.ok) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: result.content ?? '' },
+        ])
+      } else {
+        setError(result.error ?? 'unknown error')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <header className="border-b border-border px-6 py-4">
+          <h2 className="text-base font-semibold tracking-tight">
+            Chat — remote on{' '}
+            <span className="text-primary">{host.label}</span>
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Sends an OpenAI-shape chat completion through the svc&apos;s
+            /llama proxy. Non-streaming for v1; streaming over the SSH
+            tunnel lands in B.5d.
+          </p>
+        </header>
+
+        <div className="max-h-[420px] min-h-[200px] overflow-y-auto border-b border-border bg-background px-6 py-4">
+          {messages.length === 0 ? (
+            <p className="py-8 text-center text-xs text-muted-foreground">
+              Send a message to start chatting with the remote model.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {messages.map((m, i) => (
+                <li
+                  key={i}
+                  className={
+                    m.role === 'user'
+                      ? 'rounded-md bg-muted/50 px-3 py-2 text-sm'
+                      : 'rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm'
+                  }
+                >
+                  <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    {m.role}
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap">{m.content}</p>
+                </li>
+              ))}
+              {sending && (
+                <li className="text-xs text-muted-foreground">
+                  …waiting for response (may take up to a few minutes for
+                  long generations)
+                </li>
+              )}
+            </ul>
+          )}
+        </div>
+
+        {error && (
+          <div className="border-b border-border bg-destructive/5 px-6 py-2 text-xs text-destructive">
+            {error}
+          </div>
+        )}
+
+        <div className="grid gap-3 px-6 py-4 sm:grid-cols-[1fr_auto_auto_auto]">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            placeholder="Type a message and hit Enter (Shift+Enter for newline)"
+            rows={2}
+            className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+          />
+          <NumField
+            label="Temp"
+            value={Math.round(temperature * 100)}
+            onChange={(v) => setTemperature(v / 100)}
+            hint="x100"
+          />
+          <NumField
+            label="Max tokens"
+            value={maxTokens}
+            onChange={setMaxTokens}
+          />
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={() => setMessages([])}
+              disabled={sending || messages.length === 0}
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={sending || !input.trim()}
+              className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              {sending ? 'Sending…' : 'Send'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <NotPortedYet message="Streamed responses, sampling controls (top-k / top-p / etc), and the prompt-cache + router cards land in B.5d. For now: bring-your-own model + a vanilla chat loop." />
     </div>
   )
 }

@@ -143,6 +143,51 @@ func (c *Client) Stop(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
+// ChatMessage is one entry in the conversation. Maps 1:1 to the
+// OpenAI chat-completion role/content schema.
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ChatCompletion sends a non-streaming chat request to the supervised
+// llama-server via the svc's /llama proxy. Returns the assistant's
+// reply text + the raw response for callers that want token counts.
+//
+// Streaming variant will land in a follow-up once the GUI grows a
+// way to render incrementally over the SSH tunnel.
+func (c *Client) ChatCompletion(
+	ctx context.Context,
+	model string,
+	messages []ChatMessage,
+	maxTokens int,
+	temperature float64,
+) (string, map[string]any, error) {
+	if model == "" {
+		model = "local"
+	}
+	payload := map[string]any{
+		"model":       model,
+		"messages":    messages,
+		"max_tokens":  maxTokens,
+		"temperature": temperature,
+		"stream":      false,
+	}
+	var raw map[string]any
+	if err := c.post(ctx, "/llama/v1/chat/completions", payload, &raw); err != nil {
+		return "", nil, err
+	}
+	// OpenAI shape: { choices: [ { message: { content: "..." } } ] }
+	choices, _ := raw["choices"].([]any)
+	if len(choices) == 0 {
+		return "", raw, fmt.Errorf("no choices in response")
+	}
+	c0, _ := choices[0].(map[string]any)
+	msg, _ := c0["message"].(map[string]any)
+	content, _ := msg["content"].(string)
+	return content, raw, nil
+}
+
 // ─── Plumbing ───────────────────────────────────────────────────────
 
 func (c *Client) get(ctx context.Context, path string, into any) error {

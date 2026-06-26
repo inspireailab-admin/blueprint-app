@@ -168,3 +168,35 @@ func (a *App) RemoteHostStop(id string) (map[string]any, error) {
 	defer cancel()
 	return c.Stop(ctx)
 }
+
+// RemoteChatRequest is the GUI's chat payload.
+type RemoteChatRequest struct {
+	Model       string                  `json:"model"`
+	Messages    []svcclient.ChatMessage `json:"messages"`
+	MaxTokens   int                     `json:"maxTokens"`
+	Temperature float64                 `json:"temperature"`
+}
+
+// RemoteChatResult is what the GUI renders.
+type RemoteChatResult struct {
+	OK      bool           `json:"ok"`
+	Content string         `json:"content,omitempty"`
+	Raw     map[string]any `json:"raw,omitempty"`
+	Error   string         `json:"error,omitempty"`
+}
+
+// RemoteChat issues a chat-completion request against the supervised
+// llama-server on the connected host. Non-streaming for v1.
+func (a *App) RemoteChat(id string, req RemoteChatRequest) RemoteChatResult {
+	c, ok := getHostClient(id)
+	if !ok {
+		return RemoteChatResult{Error: "not connected — call ConnectHost first"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	content, raw, err := c.ChatCompletion(ctx, req.Model, req.Messages, req.MaxTokens, req.Temperature)
+	if err != nil {
+		return RemoteChatResult{Error: err.Error()}
+	}
+	return RemoteChatResult{OK: true, Content: content, Raw: raw}
+}
