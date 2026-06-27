@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CurrentServeConfig } from '../../wailsjs/go/main/App'
 import type { Model } from '../planner/types'
+import { HelpButton } from '../help/HelpButton'
 
 const ENDPOINT = 'http://127.0.0.1:8080/v1/chat/completions'
 // "blueprint-local" is the direct-spawn StartServe path's bearer. If a
@@ -141,7 +142,10 @@ export function VerifyChat({ model }: Props) {
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="border-b border-border px-6 py-4">
-        <h2 className="text-base font-semibold tracking-tight">Verify</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold tracking-tight">Verify</h2>
+          <HelpButton slug="verify-deploy" label="Verify deploy" />
+        </div>
         <p className="mt-1 text-xs text-muted-foreground">
           Send a test prompt. Hits <code>http://127.0.0.1:8080/v1/chat/completions</code> with the
           standard OpenAI shape — same request your application code will make.

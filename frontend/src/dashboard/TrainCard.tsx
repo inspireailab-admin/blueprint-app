@@ -14,6 +14,7 @@ import {
   StartLoraTraining,
 } from '../../wailsjs/go/main/App'
 import type { main } from '../../wailsjs/go/models'
+import { HelpButton } from '../help/HelpButton'
 
 export function TrainCard() {
   const [status, setStatus] = useState<main.LoraTrainingStatus | null>(null)
@@ -60,7 +61,10 @@ export function TrainCard() {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">LoRA training</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">LoRA training</h2>
+            <HelpButton slug="lora-training" label="LoRA training" />
+          </div>
           <p className="mt-0.5 max-w-prose text-xs text-muted-foreground">
             Fine-tune LoRA adapters on the client&apos;s data. Runs via the Python sidecar — needs
             the <b>LoRA training pipeline</b> feature installed and an NVIDIA GPU.

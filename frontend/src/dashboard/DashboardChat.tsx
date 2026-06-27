@@ -22,6 +22,7 @@ import {
   LookupPromptCache,
   StorePromptCache,
 } from '../../wailsjs/go/main/App'
+import { HelpButton } from '../help/HelpButton'
 
 export type SamplingParams = {
   temperature: number
@@ -280,7 +281,10 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Run a query</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Run a query</h2>
+            <HelpButton slug="inference-chat" label="Inference chat" />
+          </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Streams from local <code className="font-mono">/v1/chat/completions</code>. Sampling +
             behaviour parameters apply to the next request — no restart needed.

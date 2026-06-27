@@ -12,6 +12,7 @@ import {
   UpdateRemoteServer,
 } from '../../wailsjs/go/main/App'
 import type { main, remotes } from '../../wailsjs/go/models'
+import { HelpButton } from '../help/HelpButton'
 
 export function RemoteServersCard() {
   const [list, setList] = useState<remotes.Remote[]>([])
@@ -42,7 +43,10 @@ export function RemoteServersCard() {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Remote LLMs</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Remote LLMs</h2>
+            <HelpButton slug="remote-openai-servers" label="Remote servers" />
+          </div>
           <p className="mt-0.5 max-w-prose text-xs text-muted-foreground">
             Monitor OpenAI-compatible endpoints anywhere reachable on HTTP — your other Blueprint
             hosts, a self-hosted vLLM cluster, a vendor API. Probes <code className="font-mono">/v1/models</code>{' '}

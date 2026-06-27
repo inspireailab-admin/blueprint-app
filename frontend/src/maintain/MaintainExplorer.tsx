@@ -20,6 +20,7 @@ import {
   StopServe,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { HelpButton } from '../help/HelpButton'
 
 type InstalledModel = {
   id: string
@@ -221,7 +222,10 @@ function ResetCard() {
         >
           <div className="mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
             <header className="border-b border-border px-6 py-5">
-              <p className="eyebrow text-destructive">Destructive</p>
+              <div className="flex items-center gap-2">
+                <p className="eyebrow text-destructive">Destructive</p>
+                <HelpButton slug="resetting-data" label="Reset Blueprint data" />
+              </div>
               <h3 id="reset-confirm-title" className="mt-1 text-lg font-semibold tracking-tight">
                 Delete all Blueprint data?
               </h3>

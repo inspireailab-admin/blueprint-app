@@ -388,7 +388,10 @@ function GpuBreakdown({ snap }: { snap: main.Snapshot }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="border-b border-border px-6 py-4">
-        <h2 className="text-base font-semibold tracking-tight">GPU breakdown</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold tracking-tight">GPU breakdown</h2>
+          <HelpButton slug="sizing-hardware" label="GPU breakdown" />
+        </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Per-GPU VRAM, utilization, and temperature.
         </p>
@@ -465,7 +468,10 @@ function PerformanceCard({ metrics }: { metrics: main.LlamaMetrics | null }) {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Performance</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Performance</h2>
+            <HelpButton slug="llama-metrics" label="llama-server metrics" />
+          </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Scraped from llama-server&apos;s <code className="font-mono">/metrics</code> endpoint every 3 s.
             Counters tick once you send requests.
@@ -539,7 +545,10 @@ function ModelsOnDiskCard({
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex items-center justify-between border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Models on disk</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Models on disk</h2>
+            <HelpButton slug="models-on-disk" label="Models on disk" />
+          </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {installed === null
               ? 'Loading…'
