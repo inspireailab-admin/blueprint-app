@@ -314,7 +314,7 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
 
       <div
         ref={scrollRef}
-        className="max-h-[360px] min-h-[140px] overflow-y-auto border-t border-border bg-background px-6 py-4"
+        className="max-h-[360px] min-h-[140px] overflow-y-auto border-t-2 border-border bg-muted/20 px-6 py-4"
       >
         {messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -326,10 +326,10 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
               <li key={i} className={m.role === 'user' ? 'flex justify-end' : ''}>
                 <div
                   className={[
-                    'max-w-[80%] rounded-2xl px-4 py-2 text-sm',
+                    'max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow-sm',
                     m.role === 'user'
                       ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-foreground',
+                      : 'border-2 border-foreground/25 bg-card text-foreground',
                   ].join(' ')}
                 >
                   {m.content || (m.role === 'assistant' && (
@@ -359,7 +359,7 @@ export function DashboardChat({ port, apiKey: initialApiKey }: Props) {
           e.preventDefault()
           if (!sending) send()
         }}
-        className="flex items-center gap-2 border-t border-border bg-muted/30 px-6 py-3"
+        className="flex items-center gap-2 border-t-2 border-border bg-muted/60 px-6 py-3"
       >
         {compressAvailable && (
           <button
