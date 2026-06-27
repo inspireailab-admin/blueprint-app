@@ -30,12 +30,19 @@ export function VerifyChat({ model }: Props) {
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Holds the AbortController for the in-flight fetch so the Stop
+  // button can interrupt mid-stream. Cleared in the finally block.
+  const abortRef = useRef<AbortController | null>(null)
 
   const supportsImages = model.type === 'vision-language'
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages])
+
+  function stop() {
+    abortRef.current?.abort()
+  }
 
   const send = useCallback(async () => {
     const text = input.trim()
@@ -74,6 +81,9 @@ export function VerifyChat({ model }: Props) {
         // ignore; we'll send the fallback and let llama-server tell us
       }
 
+      const ctrl = new AbortController()
+      abortRef.current = ctrl
+
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         headers: {
@@ -81,6 +91,7 @@ export function VerifyChat({ model }: Props) {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ model: 'local', messages: apiMessages, stream: true }),
+        signal: ctrl.signal,
       })
 
       if (!res.ok || !res.body) {
@@ -122,11 +133,17 @@ export function VerifyChat({ model }: Props) {
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
-      setMessages((m) => m.slice(0, -1))
+      // User clicked Stop — keep whatever streamed so far, no error.
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // intentional, swallow
+      } else {
+        const msg = err instanceof Error ? err.message : String(err)
+        setError(msg)
+        setMessages((m) => m.slice(0, -1))
+      }
     } finally {
       setSending(false)
+      abortRef.current = null
     }
   }, [input, imageDataUrl, messages, sending])
 
@@ -250,14 +267,31 @@ export function VerifyChat({ model }: Props) {
           disabled={sending}
           className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
         />
-        <button
-          type="submit"
-          disabled={sending || (!input.trim() && !imageDataUrl)}
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
-        >
-          {sending ? 'Sending…' : 'Send'}
-          {!sending && <span aria-hidden>→</span>}
-        </button>
+        {sending ? (
+          // Stop swaps in while a response is streaming. Same shape as
+          // Send so the layout doesn't jump.
+          <button
+            type="button"
+            onClick={stop}
+            title="Stop response"
+            aria-label="Stop response"
+            className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background shadow-sm transition hover:bg-foreground/85"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden>
+              <rect x="6" y="6" width="12" height="12" rx="1.5" />
+            </svg>
+            Stop
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!input.trim() && !imageDataUrl}
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
+          >
+            Send
+            <span aria-hidden>→</span>
+          </button>
+        )}
       </form>
     </section>
   )

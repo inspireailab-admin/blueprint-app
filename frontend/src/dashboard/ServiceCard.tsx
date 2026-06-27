@@ -27,6 +27,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   ApplyServeConfig,
   CurrentServeConfig,
+  InstallRuntime,
   ListLoraAdapters,
   RestartManagedServer,
   ServiceInfo,
@@ -166,10 +167,24 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
   const stopped = info.scmState !== 'running'
   const hasModels = (installed?.length ?? 0) > 0
 
+  // Detect known recoverable error patterns so we can surface specific
+  // guidance instead of leaving the user staring at a generic "child
+  // keeps crashing" red wall.
+  const lastErr = (info.lastError ?? '').toLowerCase()
+  const runtimeMissing =
+    crashed && (lastErr.includes('llama-server not found') ||
+                lastErr.includes('llama-server.exe') ||
+                lastErr.includes('runtime not installed') ||
+                lastErr.includes('file not found') ||
+                lastErr.includes('no such file'))
+
+  // Use a warning (amber) tone for crashes instead of destructive red.
+  // A red wall on first-launch is brand-corrosive; amber-with-guidance
+  // reads as "we know what happened, here's the fix."
   const tone = serving
     ? 'border-chart-4/40 bg-chart-4/5'
     : crashed
-      ? 'border-destructive/40 bg-destructive/5'
+      ? 'border-amber-500/40 bg-amber-500/[0.06]'
       : 'border-border bg-card'
 
   // ─── Headline + lead controls ───────────────────────────────────────
@@ -184,10 +199,20 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
       }
     }
     if (crashed) {
+      if (runtimeMissing) {
+        return {
+          eyebrow: 'Runtime not installed',
+          title: <>llama-server isn&apos;t on disk yet</>,
+          sub: 'Install the runtime first, then start serving — see Maintain → Runtime.',
+        }
+      }
       return {
-        eyebrow: 'Supervisor — crash loop',
-        title: <>Child keeps crashing</>,
-        sub: `${info.restartCount ?? 0} restarts so far`,
+        eyebrow: 'Supervisor stopped',
+        title: <>Model server keeps exiting</>,
+        sub:
+          (info.restartCount ?? 0) > 0
+            ? `${info.restartCount} restart attempt${info.restartCount === 1 ? '' : 's'} so far`
+            : 'Tried to start but the child process exited immediately.',
       }
     }
     if (stopped) {
@@ -255,15 +280,45 @@ export function ServiceCard({ installed, defaults, onPickModel }: Props) {
               </button>
             </>
           ) : crashed ? (
-            <button
-              type="button"
-              disabled={actionInFlight !== null}
-              onClick={() => run('restart', RestartManagedServer)}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
-            >
-              {actionInFlight === 'restart' && <Spinner />}
-              {actionInFlight === 'restart' ? 'Restarting…' : 'Restart'} →
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {runtimeMissing ? (
+                // Specific recovery: install the runtime, then the next
+                // supervisor cycle (~5s) sees the binary and starts.
+                <button
+                  type="button"
+                  disabled={actionInFlight !== null}
+                  onClick={() => run('install-runtime', InstallRuntime)}
+                  className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {actionInFlight === 'install-runtime' && <Spinner />}
+                  {actionInFlight === 'install-runtime'
+                    ? 'Installing runtime…'
+                    : 'Install runtime'}
+                  {actionInFlight !== 'install-runtime' && <span aria-hidden>→</span>}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={actionInFlight !== null}
+                  onClick={() => run('restart', RestartManagedServer)}
+                  className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {actionInFlight === 'restart' && <Spinner />}
+                  {actionInFlight === 'restart' ? 'Restarting…' : 'Try again'}
+                  {actionInFlight !== 'restart' && <span aria-hidden>→</span>}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={actionInFlight !== null}
+                onClick={() => run('stop', StopManagedServer)}
+                title="Stop the supervisor so it stops trying to restart the crashed model. The service stays installed; you can apply a different config from below."
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:opacity-60"
+              >
+                {actionInFlight === 'stop' && <Spinner />}
+                {actionInFlight === 'stop' ? 'Stopping…' : 'Stop trying'}
+              </button>
+            </div>
           ) : !hasModels ? (
             <button
               type="button"

@@ -7,10 +7,22 @@ type Props = {
   ranked: RankedModel[]
   selectedId: string | null
   requirements: Requirements
+  /**
+   * Total VRAM on this machine (in GB) for the fit-vs-this-GPU badge.
+   * null = unknown (no GPU detected, or snapshot not yet loaded) — in
+   * that case the badge stays hidden so we don't show meaningless data.
+   */
+  userVramGB: number | null
   onSelect: (id: string) => void
 }
 
-export function ResultsList({ ranked, selectedId, requirements, onSelect }: Props) {
+export function ResultsList({
+  ranked,
+  selectedId,
+  requirements,
+  userVramGB,
+  onSelect,
+}: Props) {
   const included = ranked.filter((r) => !r.verdict.excludedBy)
   const excluded = ranked.filter((r) => r.verdict.excludedBy)
   const topIncludedId = included[0]?.model.id
@@ -36,12 +48,19 @@ export function ResultsList({ ranked, selectedId, requirements, onSelect }: Prop
         <ActiveFilterSummary requirements={requirements} />
       </div>
 
+      {userVramGB && (
+        <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+          Sizing fit against your GPU: <span className="text-foreground">{userVramGB} GB VRAM detected</span>
+        </p>
+      )}
+
       <ul className="space-y-2">
         {included.map((r) => (
           <li key={r.model.id}>
             <Row
               ranked={r}
               requirements={requirements}
+              userVramGB={userVramGB}
               selected={selectedId === r.model.id}
               isBestFit={r.model.id === topIncludedId}
               onSelect={() => onSelect(r.model.id)}
@@ -71,12 +90,14 @@ export function ResultsList({ ranked, selectedId, requirements, onSelect }: Prop
 function Row({
   ranked,
   requirements,
+  userVramGB,
   selected,
   isBestFit,
   onSelect,
 }: {
   ranked: RankedModel
   requirements: Requirements
+  userVramGB: number | null
   selected: boolean
   isBestFit: boolean
   onSelect: () => void
@@ -110,6 +131,7 @@ function Row({
             ● best fit
           </span>
         )}
+        <FitBadge totalGB={v.totalGB} userVramGB={userVramGB} />
         <span className="ml-auto font-mono text-xs text-muted-foreground">
           {verdict.score}/100
         </span>
@@ -137,6 +159,47 @@ function Row({
         </span>
       </div>
     </button>
+  )
+}
+
+/**
+ * Renders a colored pill indicating how the model's total VRAM
+ * requirement compares to the user's detected GPU memory:
+ *   green  ·  fits with comfortable headroom (<70% of available VRAM)
+ *   amber  ·  tight fit (70–100% of VRAM — works but no room for
+ *             KV-cache spikes or other apps)
+ *   red    ·  exceeds available VRAM at this quant
+ * Hidden when userVramGB is null (no GPU detected or snapshot still
+ * loading); a CPU-only host shouldn't see misleading "won't fit"
+ * badges on every card.
+ */
+function FitBadge({
+  totalGB,
+  userVramGB,
+}: {
+  totalGB: number
+  userVramGB: number | null
+}) {
+  if (!userVramGB) return null
+  const ratio = totalGB / userVramGB
+  if (ratio > 1) {
+    return (
+      <span className="rounded-full border border-destructive/30 bg-destructive/5 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-destructive">
+        ● needs more VRAM
+      </span>
+    )
+  }
+  if (ratio > 0.7) {
+    return (
+      <span className="rounded-full border border-amber-500/30 bg-amber-500/[0.08] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-700 dark:text-amber-400">
+        ● tight fit
+      </span>
+    )
+  }
+  return (
+    <span className="rounded-full border border-chart-4/30 bg-chart-4/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-chart-4">
+      ● runs on this machine
+    </span>
   )
 }
 
