@@ -6,7 +6,8 @@
 // throughput (tokens/sec generation), TTFT (P50 + P95), and the
 // per-prompt detail so a future deep-dive surface can show "which
 // prompts moved when we switched from Q4_K_M to IQ4_XS."
-
+//
+// Author: Amar Mond.
 package calibration
 
 import (

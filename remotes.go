@@ -3,7 +3,8 @@
 // Probe = a one-shot HTTP GET against the remote's /health (or
 // equivalent) with a 3-second timeout. The Dashboard polls this
 // every few seconds so each remote card paints a live status dot.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

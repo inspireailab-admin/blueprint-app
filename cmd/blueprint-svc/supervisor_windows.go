@@ -3,7 +3,8 @@
 // Windows bridge for the supervisor — implements svc.Handler so the
 // SCM can drive runSupervisor. All the actual supervision logic lives
 // in supervisor.go (cross-platform); this file is just the wiring.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
@@ -20,6 +21,10 @@ import (
 
 type supervisor struct{}
 
+// Execute is the Windows Service handler entry point (satisfies svc.Handler).
+// The SCM calls it once per service start; we kick off runSupervisor in a
+// goroutine, fan ChangeRequests into context cancellation, and report status
+// back to the SCM via the status channel.
 func (s *supervisor) Execute(args []string, r <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 

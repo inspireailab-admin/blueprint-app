@@ -4,7 +4,7 @@
 // prompt is replayed against a large (expensive) model and the larger
 // answer wins.
 //
-// Heuristic in v1 is content-based â€” the small model's response is
+// Heuristic in v1 is content-based — the small model's response is
 // matched against configured patterns ("I don't know", "I'm not
 // sure", etc.). Patterns are case-insensitive substrings. This is
 // crude but practical: small models tend to bail out explicitly
@@ -14,7 +14,8 @@
 // State is persisted to ~/.blueprint/router.json. Stats track lifetime
 // route distribution + escalation rate so the Dashboard can render
 // cost savings.
-
+//
+// Author: Amar Mond.
 package router
 
 import (
@@ -32,7 +33,7 @@ type Endpoint struct {
 	Label   string `json:"label"`   // human label, "Llama 3.2 1B" / "Anthropic Sonnet 4.6"
 	BaseURL string `json:"baseUrl"` // e.g. "http://127.0.0.1:8080/v1" or "https://api.anthropic.com/v1"
 	APIKey  string `json:"apiKey"`  // bearer token
-	Model   string `json:"model"`   // model identifier the API expects ("local", "claude-sonnet-4-6", â€¦)
+	Model   string `json:"model"`   // model identifier the API expects ("local", "claude-sonnet-4-6", …)
 }
 
 // Config is what the user tunes from the Dashboard. Both endpoints
@@ -50,7 +51,7 @@ type Config struct {
 	// what the caller sees.
 	EscalationPatterns []string `json:"escalationPatterns"`
 
-	// AlwaysEscalateOnPrefix â€” prompts beginning with any of these
+	// AlwaysEscalateOnPrefix — prompts beginning with any of these
 	// strings skip the small model entirely. Useful for tasks the
 	// user knows in advance need the bigger model (e.g. "Summarize:",
 	// "Translate:").
@@ -107,7 +108,7 @@ type Router struct {
 }
 
 // New loads from disk, returns an empty Router on error. Cache-style
-// state â€” non-load-bearing.
+// state — non-load-bearing.
 func New() *Router {
 	r := &Router{config: DefaultConfig}
 	r.load()
@@ -143,7 +144,7 @@ func (r *Router) Stats() Stats {
 	return s
 }
 
-// â”€â”€â”€ Routing decisions (no I/O â€” caller handles the HTTP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Routing decisions (no I/O — caller handles the HTTP) ─────────────
 
 // ShouldSkipToLarge returns true when the prompt prefix matches an
 // always-escalate rule. The caller skips the small-model call entirely.
@@ -215,7 +216,7 @@ func (r *Router) ResetStats() {
 	r.save()
 }
 
-// â”€â”€â”€ Persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Persistence ──────────────────────────────────────────────────────
 
 type persisted struct {
 	Config Config `json:"config"`

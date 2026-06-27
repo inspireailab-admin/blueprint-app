@@ -5,7 +5,8 @@
 // The Monitor tab subscribes on mount and stops polling on unmount —
 // when the tab isn't visible we don't burn cycles on samples nobody
 // will see.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

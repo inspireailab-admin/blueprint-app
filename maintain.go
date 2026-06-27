@@ -3,7 +3,8 @@
 // the llama.cpp runtime. Compose with the existing Deploy methods to
 // implement "swap models" and "restart serve" client-side without
 // duplicating the supervision code.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
@@ -35,7 +36,7 @@ type InstalledModel struct {
 }
 
 // InstalledModels scans ~/.blueprint/models for GGUF files declared in
-// the catalog. Files we don't recognize are skipped â€” users who hand-
+// the catalog. Files we don't recognize are skipped — users who hand-
 // dropped GGUFs in there shouldn't see them as deletable from our UI
 // (Blueprint doesn't own them).
 func (a *App) InstalledModels() ([]InstalledModel, error) {
@@ -72,7 +73,7 @@ func (a *App) InstalledModels() ([]InstalledModel, error) {
 
 // DeleteModel removes a previously-pulled GGUF from disk. The caller
 // is responsible for stopping a serve that uses this model before
-// calling â€” we don't auto-stop because deleting a model out from under
+// calling — we don't auto-stop because deleting a model out from under
 // a running server is a user mistake we'd rather surface than mask.
 func (a *App) DeleteModel(modelID, fileName string) error {
 	if modelID == "" || fileName == "" {
@@ -82,7 +83,7 @@ func (a *App) DeleteModel(modelID, fileName string) error {
 		return fmt.Errorf("invalid file name: %q", fileName)
 	}
 	// Resolve via the catalog so we can't be tricked into deleting a
-	// random path â€” the catalog's filename has to match.
+	// random path — the catalog's filename has to match.
 	model, err := catalog.Get(modelID)
 	if err != nil {
 		return err
@@ -164,7 +165,7 @@ func (a *App) BlueprintDataSummary() (BlueprintDataSummary, error) {
 
 // ResetBlueprintData removes ~/.blueprint entirely: runtime, models,
 // first-run marker, everything. Stops the supervised llama-server first
-// if one is running, then quits the app â€” the user can re-launch (and
+// if one is running, then quits the app — the user can re-launch (and
 // see the first-run welcome again) or uninstall the binary itself via
 // the OS package manager.
 //

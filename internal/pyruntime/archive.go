@@ -1,7 +1,8 @@
 // Archive extraction for the uv release tarballs / zips. uv ships a
 // single binary inside the archive; we walk the archive, find the
 // binary entry, and write it to the configured uv path.
-
+//
+// Author: Amar Mond.
 package pyruntime
 
 import (

@@ -6,7 +6,8 @@
 // Connect is explicit; we never auto-dial because SSH connections
 // hold a TCP socket and a remote shell session — the user should
 // know they're paying for that.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
@@ -17,9 +18,25 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/inspireailab-admin/blueprint-app/internal/secrets"
 	bpssh "github.com/inspireailab-admin/blueprint-app/internal/ssh"
 	"github.com/inspireailab-admin/blueprint-app/internal/svcclient"
 )
+
+// hostTokenCache binds the OS-keychain-backed secrets package to a
+// single host ID so svcclient can fetch / store the bearer token
+// without knowing what a "host" is.
+type hostTokenCache struct{ hostID string }
+
+// Get implements svcclient.TokenCache by reading the keychain entry for
+// the bound host ID.
+func (c hostTokenCache) Get() (string, bool) { return secrets.Get(c.hostID) }
+// Set implements svcclient.TokenCache by storing the bearer token under
+// the bound host ID. Best-effort: a missing keychain returns an error
+// the caller can choose to ignore.
+func (c hostTokenCache) Set(token string) error {
+	return secrets.Set(c.hostID, token)
+}
 
 var (
 	hostConnMu sync.Mutex
@@ -80,7 +97,7 @@ func (a *App) ConnectHost(id string) HostConnectResult {
 		Host:    h.Host,
 		Port:    h.Port,
 		KeyPath: h.KeyPath,
-	})
+	}, hostTokenCache{hostID: id})
 	if err != nil {
 		out.Error = err.Error()
 		return out
@@ -169,6 +186,32 @@ func (a *App) RemoteHostStop(id string) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return c.Stop(ctx)
+}
+
+// RemoteHostPull asks the connected host's svc to download the given
+// catalog model + quant directly onto its disk. Returns the initial
+// PullState; the GUI then polls RemoteHostPullStatus on a short
+// interval to drive a progress UI.
+func (a *App) RemoteHostPull(id, modelID, quant string) (map[string]any, error) {
+	c, ok := getHostClient(id)
+	if !ok {
+		return nil, fmt.Errorf("not connected — call ConnectHost first")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return c.Pull(ctx, modelID, quant)
+}
+
+// RemoteHostPullStatus polls the in-flight (or completed) PullState
+// for a model+quant pair on the connected host.
+func (a *App) RemoteHostPullStatus(id, modelID, quant string) (map[string]any, error) {
+	c, ok := getHostClient(id)
+	if !ok {
+		return nil, fmt.Errorf("not connected — call ConnectHost first")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.PullStatus(ctx, modelID, quant)
 }
 
 // RemoteChatRequest is the GUI's chat payload.

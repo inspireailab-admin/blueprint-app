@@ -1,4 +1,4 @@
-// Calibrate IPC surface â€” exposes the imatrix-calibration + quantize +
+// Calibrate IPC surface — exposes the imatrix-calibration + quantize +
 // evaluate workflow to the frontend.
 //
 // Method shape mirrors the deploy.go pattern: cheap query methods
@@ -11,11 +11,12 @@
 //   calibrate:imatrix-stage     {runId, stage: "running"|"done"|"error", detail}
 //   calibrate:quantize-progress {runId, target, percent}
 //   calibrate:quantize-stage    {runId, target, stage}
-//   calibrate:run-updated       {runId}        â€” meta.json changed, UI refreshes
+//   calibrate:run-updated       {runId}        — meta.json changed, UI refreshes
 //
 // Long-running work happens in goroutines; the IPC method returns nil
 // after kicking the work off. The UI listens for events.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
@@ -38,7 +39,7 @@ import (
 	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 )
 
-// â”€â”€â”€ Public types (Wails-bound) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Public types (Wails-bound) ────────────────────────────────────────────
 
 // CalibrationTools reports whether the binaries we need are present.
 // The Calibrate UI uses this to surface a clear "reinstall runtime"
@@ -50,7 +51,7 @@ type CalibrationTools struct {
 	QuantizePresent bool  `json:"quantizePresent"`
 }
 
-// â”€â”€â”€ Tools probe â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Tools probe ───────────────────────────────────────────────────────────
 
 // CalibrationTools reports the on-disk presence of the binaries we
 // need to drive the calibration pipeline. Both ship in the llama.cpp
@@ -73,7 +74,7 @@ func (a *App) CalibrationTools() CalibrationTools {
 	return out
 }
 
-// â”€â”€â”€ Run lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Run lifecycle ─────────────────────────────────────────────────────────
 
 // CreateCalibrationRun stamps a fresh run directory and returns the
 // run. Caller is expected to upload prompts next.
@@ -96,7 +97,7 @@ func (a *App) DeleteCalibrationRun(runID string) error {
 	return calibration.DeleteRun(runID)
 }
 
-// â”€â”€â”€ Sample datasets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Sample datasets ──────────────────────────────────────────────────────
 
 // ListSampleDatasets returns the bundled calibration sample datasets.
 // The Calibrate tab's "Load sample" picker renders these as cards.
@@ -105,7 +106,7 @@ func (a *App) ListSampleDatasets() []samples.Sample {
 }
 
 // SeedSampleRun creates a fresh calibration Run pre-populated with the
-// chosen sample's prompts + eval set, with "DEMO â€” " prefixed onto the
+// chosen sample's prompts + eval set, with "DEMO — " prefixed onto the
 // ClientLabel so the user can tell demo runs from real engagements at
 // a glance. Recommended base model + base quant are populated so the
 // imatrix step can fire without further user input.
@@ -124,7 +125,7 @@ func (a *App) SeedSampleRun(sampleID string) (*calibration.Run, error) {
 		return nil, err
 	}
 
-	label := fmt.Sprintf("DEMO â€” %s", sample.Name)
+	label := fmt.Sprintf("DEMO — %s", sample.Name)
 	run, err := calibration.CreateRun(label)
 	if err != nil {
 		return nil, err
@@ -135,7 +136,7 @@ func (a *App) SeedSampleRun(sampleID string) (*calibration.Run, error) {
 		_ = calibration.DeleteRun(run.ID)
 		return nil, fmt.Errorf("save prompts: %w", err)
 	}
-	// Persist eval set (does NOT bump phase past "prompts" â€” the eval
+	// Persist eval set (does NOT bump phase past "prompts" — the eval
 	// step explicitly checks the JSONL on disk).
 	if _, err := calibration.SaveEvalSet(run.ID, evalSet); err != nil {
 		_ = calibration.DeleteRun(run.ID)
@@ -156,7 +157,7 @@ func (a *App) SeedSampleRun(sampleID string) (*calibration.Run, error) {
 	return run, nil
 }
 
-// LoadSampleReadme returns the per-sample README markdown â€” useful for
+// LoadSampleReadme returns the per-sample README markdown — useful for
 // a "details" pane next to the picker.
 func (a *App) LoadSampleReadme(sampleID string) (string, error) {
 	return samples.LoadReadme(sampleID)
@@ -188,15 +189,15 @@ func (a *App) GetCalibrationEvalResults(runID string) (*calibration.EvalResults,
 	return calibration.ReadEvalResults(runID)
 }
 
-// â”€â”€â”€ imatrix calibration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── imatrix calibration ───────────────────────────────────────────────────
 
-// imatrixMu serializes calibration runs across the process â€” we don't
+// imatrixMu serializes calibration runs across the process — we don't
 // want two llama-imatrix invocations competing for VRAM at once.
 var imatrixMu sync.Mutex
 
 // RunImatrixCalibration kicks off llama-imatrix for the given run.
 // The base GGUF is resolved from the model catalog + the user-chosen
-// baseQuant (highest fidelity available is the right default â€” Q8 or
+// baseQuant (highest fidelity available is the right default — Q8 or
 // FP16). Streams progress over calibrate:imatrix-progress events.
 //
 // Returns immediately. UI listens for events + polls the run's phase
@@ -204,7 +205,7 @@ var imatrixMu sync.Mutex
 func (a *App) RunImatrixCalibration(runID, baseModelID, baseQuant string) error {
 	tools := a.CalibrationTools()
 	if !tools.ImatrixPresent {
-		return fmt.Errorf("llama-imatrix.exe not found at %s â€” reinstall runtime", tools.ImatrixBin)
+		return fmt.Errorf("llama-imatrix.exe not found at %s — reinstall runtime", tools.ImatrixBin)
 	}
 
 	run, err := calibration.ReadRun(runID)
@@ -232,7 +233,7 @@ func (a *App) RunImatrixCalibration(runID, baseModelID, baseQuant string) error 
 		return err
 	}
 	if _, err := os.Stat(modelPath); err != nil {
-		return fmt.Errorf("base GGUF not on disk: %s â€” pull %s %s first via Deploy", modelPath, baseModelID, baseQuant)
+		return fmt.Errorf("base GGUF not on disk: %s — pull %s %s first via Deploy", modelPath, baseModelID, baseQuant)
 	}
 
 	promptsPath, err := calibration.PromptsPath(runID)
@@ -244,7 +245,7 @@ func (a *App) RunImatrixCalibration(runID, baseModelID, baseQuant string) error 
 		return err
 	}
 
-	// Update run state before kicking off â€” UI sees "imatrix running".
+	// Update run state before kicking off — UI sees "imatrix running".
 	run.BaseModelID = baseModelID
 	run.BaseQuant = baseQuant
 	run.Phase = calibration.PhaseImatrix
@@ -303,7 +304,7 @@ func (a *App) runImatrixWorker(runID, bin, modelPath, promptsPath, imatrixOut st
 		return
 	}
 
-	// Success â€” bump phase, emit done.
+	// Success — bump phase, emit done.
 	run, err := calibration.ReadRun(runID)
 	if err == nil && run != nil {
 		run.Phase = calibration.PhaseImatrixOK
@@ -385,7 +386,7 @@ func parseFraction(s string) (a, b int, ok bool) {
 	return a, b, true
 }
 
-// failRun is the common error path â€” records the error in meta.json,
+// failRun is the common error path — records the error in meta.json,
 // flips phase to PhaseError, emits a stage event.
 func (a *App) failRun(runID string, err error) {
 	run, ferr := calibration.ReadRun(runID)
@@ -403,7 +404,7 @@ func (a *App) emitRunUpdated(runID string) {
 	wailsruntime.EventsEmit(a.ctx, "calibrate:run-updated", map[string]string{"runId": runID})
 }
 
-// â”€â”€â”€ Quantize â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Quantize ──────────────────────────────────────────────────────────────
 
 // RunCalibratedQuantization spawns llama-quantize once per target,
 // passing --imatrix so the calibration matrix steers the per-tensor
@@ -411,7 +412,7 @@ func (a *App) emitRunUpdated(runID string) {
 func (a *App) RunCalibratedQuantization(runID string, targets []string) error {
 	tools := a.CalibrationTools()
 	if !tools.QuantizePresent {
-		return fmt.Errorf("llama-quantize.exe not found at %s â€” reinstall runtime", tools.QuantizeBin)
+		return fmt.Errorf("llama-quantize.exe not found at %s — reinstall runtime", tools.QuantizeBin)
 	}
 	if len(targets) == 0 {
 		return fmt.Errorf("pick at least one target quant (e.g. Q4_K_M)")
@@ -425,7 +426,7 @@ func (a *App) RunCalibratedQuantization(runID string, targets []string) error {
 		return fmt.Errorf("run %q does not exist", runID)
 	}
 	if run.Phase != calibration.PhaseImatrixOK && run.Phase != calibration.PhaseQuantizeOK {
-		return fmt.Errorf("calibration not finished â€” current phase %q", run.Phase)
+		return fmt.Errorf("calibration not finished — current phase %q", run.Phase)
 	}
 
 	model, err := catalog.Get(run.BaseModelID)

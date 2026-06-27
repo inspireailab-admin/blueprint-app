@@ -4,7 +4,8 @@
 //
 // The cache is a single App-scoped instance — desktop apps are
 // single-user so global state is fine.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

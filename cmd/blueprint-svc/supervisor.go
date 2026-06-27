@@ -10,7 +10,8 @@
 //
 // In both cases the bridge just creates a context, calls runSupervisor,
 // cancels on shutdown.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
@@ -167,6 +168,11 @@ func runSupervisor(ctx context.Context, opts runSupervisorOpts) {
 
 		err = cmd.Wait()
 		logFile.Close()
+		// Release the per-child context once Wait returns. The child
+		// process is gone at this point; cc() just frees the cancel
+		// goroutine the WithCancel call spun up. Without this we leak
+		// one goroutine per restart cycle.
+		cc()
 
 		if opts.onChildEnd != nil {
 			opts.onChildEnd()

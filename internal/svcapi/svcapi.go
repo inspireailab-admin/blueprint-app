@@ -21,7 +21,8 @@
 //
 // Phase B.3 ships read-only. Write endpoints (start/stop/serve)
 // come in B.3b once the read path is shaken out.
-
+//
+// Author: Amar Mond.
 package svcapi
 
 import (
@@ -38,6 +39,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +49,7 @@ import (
 	"github.com/inspireailab-admin/blueprint-cli/pkg/catalog"
 	"github.com/inspireailab-admin/blueprint-cli/pkg/paths"
 
+	"github.com/inspireailab-admin/blueprint-app/internal/logging"
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
 )
 
@@ -116,6 +119,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/v1/snapshot", s.auth(s.handleSnapshot))
 	mux.HandleFunc("/v1/serve", s.auth(s.handleServe))
 	mux.HandleFunc("/v1/stop", s.auth(s.handleStop))
+	mux.HandleFunc("/v1/pull", s.auth(s.handlePull))
 	// /llama/* reverse-proxies to the supervised llama-server on
 	// 127.0.0.1:{cfg.Port}. The svc strips the /llama prefix and
 	// injects llama-server's APIKey as the bearer header — the
@@ -124,17 +128,23 @@ func (s *Server) routes() *http.ServeMux {
 	return mux
 }
 
-// auth wraps a handler with constant-time bearer check.
+// auth wraps a handler with a constant-time bearer-token check and
+// logs every rejected request so the operator has an audit trail of
+// failed auth attempts (port-scan / brute-force probes show up here).
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		const prefix = "Bearer "
 		if !strings.HasPrefix(header, prefix) {
+			logging.L().Warn("svcapi auth missing bearer",
+				"path", r.URL.Path, "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
 			return
 		}
 		got := header[len(prefix):]
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+			logging.L().Warn("svcapi auth invalid token",
+				"path", r.URL.Path, "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
 			return
 		}
@@ -278,17 +288,33 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.RAMTotalMB = int64(v.Total / 1024 / 1024)
 	}
 
-	out.GPUs = readNvidiaSmi(r.Context())
+	out.GPUs = readGPUs(r.Context())
 
 	writeJSON(w, http.StatusOK, out)
 }
 
-// readNvidiaSmi shells out to nvidia-smi for the per-GPU snapshot.
-// Returns empty slice if nvidia-smi isn't installed or fails — the GUI
-// renders a "no GPUs detected" empty state.
+// readGPUs probes every backend we know about and unions the results.
+// A machine with both NVIDIA and AMD cards will report both; common
+// case is exactly one backend returning entries and the rest empty.
 //
-// AMD ROCm + Apple Silicon paths land in a follow-up; for v1 nvidia
-// covers ~95% of the calibration / serving workload.
+// Index is re-numbered across backends so the GUI's stable iteration
+// order doesn't break when, e.g., a NVIDIA card and an iGPU coexist.
+func readGPUs(ctx context.Context) []gpuEntry {
+	out := []gpuEntry{}
+	out = append(out, readNvidiaSmi(ctx)...)
+	out = append(out, readRocmSmi(ctx)...)
+	out = append(out, readAppleSiliconGPU(ctx)...)
+	for i := range out {
+		out[i].Index = i
+	}
+	if out == nil {
+		return []gpuEntry{}
+	}
+	return out
+}
+
+// readNvidiaSmi shells out to nvidia-smi for the per-GPU snapshot.
+// Returns empty slice if nvidia-smi isn't installed or fails.
 func readNvidiaSmi(ctx context.Context) []gpuEntry {
 	out := []gpuEntry{}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -314,6 +340,118 @@ func readNvidiaSmi(ctx context.Context) []gpuEntry {
 		out = append(out, g)
 	}
 	return out
+}
+
+// readRocmSmi shells out to rocm-smi (Linux + AMD ROCm) for per-GPU
+// stats. Returns empty when rocm-smi isn't installed or fails.
+//
+// ROCm changes its CLI surface between versions; we parse the JSON
+// output defensively (different keys for different versions) and skip
+// cards that don't surface usable numbers instead of erroring.
+func readRocmSmi(ctx context.Context) []gpuEntry {
+	out := []gpuEntry{}
+	if runtime.GOOS != "linux" {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "rocm-smi",
+		"--showproductname", "--showuse", "--showmeminfo", "vram", "--json")
+	raw, err := cmd.Output()
+	if err != nil {
+		return out
+	}
+
+	// rocm-smi emits a top-level object keyed by card id: {"card0": {...}, "card1": {...}}.
+	var cards map[string]map[string]string
+	if err := json.Unmarshal(raw, &cards); err != nil {
+		return out
+	}
+	// Stable order: sort card ids so the GUI doesn't reshuffle on poll.
+	ids := make([]string, 0, len(cards))
+	for k := range cards {
+		ids = append(ids, k)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fields := cards[id]
+		g := gpuEntry{Name: pickField(fields, "Card series", "Card model", "GPU ID")}
+		if g.Name == "" {
+			g.Name = id
+		}
+		// Use string is something like "12%" or "12.5". Strip non-numeric tail.
+		useStr := pickField(fields, "GPU use (%)", "GPU use")
+		fmt.Sscanf(useStr, "%f", &g.UtilPct)
+		// Memory fields come in bytes; convert to MB.
+		var totalB, usedB int64
+		fmt.Sscanf(pickField(fields, "VRAM Total Memory (B)"), "%d", &totalB)
+		fmt.Sscanf(pickField(fields, "VRAM Total Used Memory (B)"), "%d", &usedB)
+		g.VramTotalMB = totalB / 1024 / 1024
+		g.VramUsedMB = usedB / 1024 / 1024
+		out = append(out, g)
+	}
+	return out
+}
+
+// readAppleSiliconGPU probes the Apple Silicon iGPU via system_profiler.
+// VRAM is unified with system RAM, so we report total system memory as
+// the VRAM total; per-GPU utilization isn't exposed without root, so
+// UtilPct stays at 0 for now (the planner cares about VRAM, not util).
+func readAppleSiliconGPU(ctx context.Context) []gpuEntry {
+	out := []gpuEntry{}
+	if runtime.GOOS != "darwin" {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "system_profiler", "SPDisplaysDataType", "-json")
+	raw, err := cmd.Output()
+	if err != nil {
+		return out
+	}
+	var parsed struct {
+		Displays []struct {
+			Name  string `json:"_name"`
+			Model string `json:"sppci_model"`
+		} `json:"SPDisplaysDataType"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return out
+	}
+	if len(parsed.Displays) == 0 {
+		return out
+	}
+	// Unified memory: report system RAM as the VRAM ceiling.
+	totalMB := int64(0)
+	if v, err := mem.VirtualMemoryWithContext(ctx); err == nil && v != nil {
+		totalMB = int64(v.Total / 1024 / 1024)
+	}
+	for _, d := range parsed.Displays {
+		name := d.Model
+		if name == "" {
+			name = d.Name
+		}
+		if name == "" {
+			name = "Apple GPU"
+		}
+		out = append(out, gpuEntry{
+			Name:        name,
+			VramTotalMB: totalMB,
+		})
+	}
+	return out
+}
+
+// pickField returns the first non-empty value from m under any of the
+// given keys. Helps absorb the rocm-smi field-name churn between
+// ROCm versions without branching on version detection.
+func pickField(m map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // handleServe accepts a partial svcconfig.Config payload and writes

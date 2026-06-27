@@ -4,7 +4,8 @@
 // waits for /health. Subsequent calls reuse the running process.
 // Sidecar dies with the app (no explicit Stop — Python process gets
 // cleaned up via the kill on context cancel).
-
+//
+// Author: Amar Mond.
 package main
 
 import (

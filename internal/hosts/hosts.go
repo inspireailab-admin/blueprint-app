@@ -13,7 +13,8 @@
 // object per host in a flat list. Private SSH key material never
 // goes here; we only store the path to the user's key file (same
 // model as ~/.ssh/config).
-
+//
+// Author: Amar Mond.
 package hosts
 
 import (

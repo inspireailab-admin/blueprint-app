@@ -3,7 +3,8 @@
 // agent auth, Run a single command and collect output, RunStream a
 // command and pipe stdout/stderr line-by-line to a callback (used by
 // the push-install UI which renders live progress).
-
+//
+// Author: Amar Mond.
 package ssh
 
 import (
@@ -78,6 +79,8 @@ type Client struct {
 	c *cryptossh.Client
 }
 
+// Close shuts down the underlying SSH client. After Close the client is
+// unusable; create a new one via Dial.
 func (cl *Client) Close() error { return cl.c.Close() }
 
 // DialTCP opens a TCP connection through the SSH transport to the

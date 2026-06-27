@@ -5,7 +5,8 @@
 // run as background threads inside it. State is persisted to
 // ~/.blueprint/lora/jobs/<job_id>/meta.json so the Go side can poll
 // without keeping anything in memory.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

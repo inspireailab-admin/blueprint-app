@@ -4,9 +4,11 @@
 //
 // Today only LlamaCpp is fully implemented; VLLM and TensorRTLLM are
 // stubbed with NotImplemented errors. The interface exists so the
-// supervisor isn't a hard refactor when those land â€” config gains an
+// supervisor isn't a hard refactor when those land — config gains an
 // `engine` field, the supervisor calls engines.Get(cfg.Engine), and
 // everything else follows.
+//
+// Author: Amar Mond.
 package engines
 
 import (
@@ -27,7 +29,7 @@ const (
 )
 
 // Info is the catalog entry the UI renders in an engine picker.
-// Stable subset of an Engine's surface â€” doesn't require knowing the
+// Stable subset of an Engine's surface — doesn't require knowing the
 // concrete type to display.
 type Info struct {
 	ID            string `json:"id"`
@@ -65,7 +67,7 @@ type Engine interface {
 }
 
 // Get returns the Engine for the given ID. Empty or unknown values
-// resolve to LlamaCpp â€” it's the default and the only one currently
+// resolve to LlamaCpp — it's the default and the only one currently
 // shipping a real implementation, so this is the safe fallback.
 func Get(id string) Engine {
 	switch id {
@@ -89,15 +91,17 @@ func All() []Info {
 	}
 }
 
-// â”€â”€â”€ llama.cpp â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── llama.cpp ─────────────────────────────────────────────────────────────
 
-// LlamaCpp is the default engine â€” the in-process supervisor uses it,
+// LlamaCpp is the default engine — the in-process supervisor uses it,
 // the Calibrate workflow's eval harness uses it. Single binary,
 // single GGUF, no Python dependency.
 type LlamaCpp struct{}
 
+// ID implements Engine.
 func (LlamaCpp) ID() string { return IDLlamaCpp }
 
+// Info implements Engine.
 func (LlamaCpp) Info() Info {
 	return Info{
 		ID:            IDLlamaCpp,
@@ -108,10 +112,15 @@ func (LlamaCpp) Info() Info {
 	}
 }
 
+// Binary implements Engine by resolving the llama.cpp binary via the kernel
+// runtime package (~/.blueprint/runtime/llama-server[.exe]).
 func (LlamaCpp) Binary() (string, error) {
 	return runtime.Find()
 }
 
+// Args implements Engine by translating svcconfig.Config into llama-server
+// command-line flags. Only fields that are set on the config are added; the
+// llama-server defaults cover the rest.
 func (LlamaCpp) Args(cfg *svcconfig.Config) []string {
 	args := []string{
 		"--model", cfg.ModelPath,
@@ -169,10 +178,13 @@ func (LlamaCpp) Args(cfg *svcconfig.Config) []string {
 	return args
 }
 
+// HealthURL implements Engine.
 func (LlamaCpp) HealthURL(cfg *svcconfig.Config) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/health", cfg.Port)
 }
 
+// MetricsURL implements Engine. Returns the empty string when metrics are
+// disabled — the supervisor treats that as "skip scrape."
 func (LlamaCpp) MetricsURL(cfg *svcconfig.Config) string {
 	if !cfg.EnableMetrics {
 		return ""
@@ -180,7 +192,7 @@ func (LlamaCpp) MetricsURL(cfg *svcconfig.Config) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/metrics", cfg.Port)
 }
 
-// â”€â”€â”€ vLLM (stub) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── vLLM (stub) ──────────────────────────────────────────────────────────
 
 // VLLM wraps the vLLM Python OpenAI-compatible server. The actual
 // engine is `python -m vllm.entrypoints.openai.api_server` running in
@@ -192,13 +204,16 @@ func (LlamaCpp) MetricsURL(cfg *svcconfig.Config) string {
 // path. vLLM downloads/caches via HF_HOME. We set HF_HOME to
 // ~/.blueprint/hf-cache so downloads stay scoped to Blueprint's data
 // dir, but the catalog/Plan flow doesn't currently surface vLLM-
-// flavored model picking â€” for now the user manually picks the
+// flavored model picking — for now the user manually picks the
 // engine + sets ModelPath to a HF identifier. A future ModelPicker
 // in ServiceCard will gate the engine choice on a per-model basis.
 type VLLM struct{}
 
+// ID implements Engine.
 func (VLLM) ID() string { return IDVLLM }
 
+// Info implements Engine. The Implemented flag flips to true once the user
+// installs the VLLM Python feature.
 func (VLLM) Info() Info {
 	implemented := pyruntime.IsInstalled(pyruntime.FeatureVLLM)
 	return Info{
@@ -210,18 +225,18 @@ func (VLLM) Info() Info {
 	}
 }
 
-// Binary returns the venv python â€” vLLM runs via `python -m
+// Binary returns the venv python — vLLM runs via `python -m
 // vllm.entrypoints.openai.api_server`.
 func (VLLM) Binary() (string, error) {
 	if !pyruntime.IsInstalled(pyruntime.FeatureVLLM) {
-		return "", fmt.Errorf("vLLM feature is not installed â€” install it via the Dashboard's Python runtime card")
+		return "", fmt.Errorf("vLLM feature is not installed — install it via the Dashboard's Python runtime card")
 	}
 	bin, err := pyruntime.VenvPython()
 	if err != nil {
 		return "", err
 	}
 	if _, err := os.Stat(bin); err != nil {
-		return "", fmt.Errorf("venv python missing at %s â€” reinstall the Python runtime (Python core feature)", bin)
+		return "", fmt.Errorf("venv python missing at %s — reinstall the Python runtime (Python core feature)", bin)
 	}
 	return bin, nil
 }
@@ -230,17 +245,17 @@ func (VLLM) Binary() (string, error) {
 //
 // Mappings:
 //
-//	cfg.ModelPath      â†’ --model            (HuggingFace identifier)
-//	cfg.BindHost       â†’ --host
-//	cfg.Port           â†’ --port
-//	cfg.APIKey         â†’ --api-key
-//	cfg.CtxSize        â†’ --max-model-len
-//	cfg.NGpuLayers     â†’ ignored (vLLM uses --tensor-parallel-size for multi-GPU)
-//	cfg.ParallelSlots  â†’ --max-num-seqs     (concurrent decode slots)
-//	cfg.BatchSize      â†’ --max-num-batched-tokens
-//	cfg.KvCacheTypeK   â†’ --kv-cache-dtype   (when "q8_0" we map to "fp8", others ignored â€” vLLM has narrower options)
+//	cfg.ModelPath      → --model            (HuggingFace identifier)
+//	cfg.BindHost       → --host
+//	cfg.Port           → --port
+//	cfg.APIKey         → --api-key
+//	cfg.CtxSize        → --max-model-len
+//	cfg.NGpuLayers     → ignored (vLLM uses --tensor-parallel-size for multi-GPU)
+//	cfg.ParallelSlots  → --max-num-seqs     (concurrent decode slots)
+//	cfg.BatchSize      → --max-num-batched-tokens
+//	cfg.KvCacheTypeK   → --kv-cache-dtype   (when "q8_0" we map to "fp8", others ignored — vLLM has narrower options)
 //
-// Everything not listed is silently ignored â€” vLLM has its own
+// Everything not listed is silently ignored — vLLM has its own
 // defaults that are sensible for GPU serving.
 func (VLLM) Args(cfg *svcconfig.Config) []string {
 	args := []string{
@@ -269,17 +284,17 @@ func (VLLM) Args(cfg *svcconfig.Config) []string {
 	return args
 }
 
-// HealthURL â€” vLLM exposes /health on the same port.
+// HealthURL — vLLM exposes /health on the same port.
 func (VLLM) HealthURL(cfg *svcconfig.Config) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/health", cfg.Port)
 }
 
-// MetricsURL â€” vLLM exposes Prometheus metrics at /metrics.
+// MetricsURL — vLLM exposes Prometheus metrics at /metrics.
 func (VLLM) MetricsURL(cfg *svcconfig.Config) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/metrics", cfg.Port)
 }
 
-// â”€â”€â”€ TensorRT-LLM (stub) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── TensorRT-LLM (stub) ──────────────────────────────────────────────────
 
 // TensorRTLLM wraps NVIDIA's TensorRT-LLM OpenAI-compatible server.
 // The actual command is `python -m tensorrt_llm.serve` (the 0.13+
@@ -296,12 +311,15 @@ func (VLLM) MetricsURL(cfg *svcconfig.Config) string {
 //
 //   2. The companion tokenizer must live next to (or be specified
 //      alongside) the engine plan. cfg.LoraAdapter is repurposed as
-//      the tokenizer directory path when engine=trt-llm â€” same idea
+//      the tokenizer directory path when engine=trt-llm — same idea
 //      as vLLM repurposing ModelPath to HF identifier.
 type TensorRTLLM struct{}
 
+// ID implements Engine.
 func (TensorRTLLM) ID() string { return IDTensorRTLLM }
 
+// Info implements Engine. The Implemented flag flips to true once the user
+// installs the TensorRT-LLM Python feature.
 func (TensorRTLLM) Info() Info {
 	implemented := pyruntime.IsInstalled(pyruntime.FeatureTensorRTLLM)
 	return Info{
@@ -313,18 +331,18 @@ func (TensorRTLLM) Info() Info {
 	}
 }
 
-// Binary returns the venv python â€” TRT-LLM runs via
+// Binary returns the venv python — TRT-LLM runs via
 // `python -m tensorrt_llm.serve`.
 func (TensorRTLLM) Binary() (string, error) {
 	if !pyruntime.IsInstalled(pyruntime.FeatureTensorRTLLM) {
-		return "", fmt.Errorf("TensorRT-LLM feature is not installed â€” install it via the Dashboard's Python runtime card")
+		return "", fmt.Errorf("TensorRT-LLM feature is not installed — install it via the Dashboard's Python runtime card")
 	}
 	bin, err := pyruntime.VenvPython()
 	if err != nil {
 		return "", err
 	}
 	if _, err := os.Stat(bin); err != nil {
-		return "", fmt.Errorf("venv python missing at %s â€” reinstall the Python runtime (Python core feature)", bin)
+		return "", fmt.Errorf("venv python missing at %s — reinstall the Python runtime (Python core feature)", bin)
 	}
 	return bin, nil
 }
@@ -333,12 +351,12 @@ func (TensorRTLLM) Binary() (string, error) {
 //
 // Mappings:
 //
-//	cfg.ModelPath      â†’ --model_dir       (engine plan directory)
-//	cfg.LoraAdapter    â†’ --tokenizer_dir   (repurposed; see struct doc)
-//	cfg.BindHost       â†’ --host
-//	cfg.Port           â†’ --port
-//	cfg.ParallelSlots  â†’ --max_batch_size
-//	cfg.BatchSize      â†’ --max_num_tokens
+//	cfg.ModelPath      → --model_dir       (engine plan directory)
+//	cfg.LoraAdapter    → --tokenizer_dir   (repurposed; see struct doc)
+//	cfg.BindHost       → --host
+//	cfg.Port           → --port
+//	cfg.ParallelSlots  → --max_batch_size
+//	cfg.BatchSize      → --max_num_tokens
 //
 // TRT-LLM's serve subcommand has fewer knobs than vLLM because most
 // of the tuning happens at engine-build time (trtllm-build), not at
@@ -352,7 +370,7 @@ func (TensorRTLLM) Args(cfg *svcconfig.Config) []string {
 	}
 	if cfg.LoraAdapter != "" {
 		// In TRT-LLM mode this field is repurposed for the tokenizer
-		// directory â€” see struct doc.
+		// directory — see struct doc.
 		args = append(args, "--tokenizer_dir", cfg.LoraAdapter)
 	}
 	if cfg.ParallelSlots > 0 {
@@ -364,12 +382,12 @@ func (TensorRTLLM) Args(cfg *svcconfig.Config) []string {
 	return args
 }
 
-// HealthURL â€” TRT-LLM's serve exposes /health.
+// HealthURL — TRT-LLM's serve exposes /health.
 func (TensorRTLLM) HealthURL(cfg *svcconfig.Config) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/health", cfg.Port)
 }
 
-// MetricsURL â€” TRT-LLM doesn't expose Prometheus metrics by default.
+// MetricsURL — TRT-LLM doesn't expose Prometheus metrics by default.
 // Returning empty means the Dashboard's metrics card stays blank when
 // this engine is selected (which is the honest behaviour).
 func (TensorRTLLM) MetricsURL(*svcconfig.Config) string {

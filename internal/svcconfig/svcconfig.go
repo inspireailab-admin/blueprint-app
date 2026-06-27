@@ -16,6 +16,8 @@
 // %ProgramData% is writable by standard users for subdirectories the
 // user creates, and readable by LocalSystem (the service account),
 // so app + service can share state without admin on every write.
+//
+// Author: Amar Mond.
 package svcconfig
 
 import (

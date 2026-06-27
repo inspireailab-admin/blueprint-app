@@ -13,7 +13,6 @@ import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
 import { DashboardExplorer } from './dashboard/DashboardExplorer'
 import { StartOverlay } from './start/StartOverlay'
-import { LicenseGate } from './license/LicenseGate'
 import type { ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { AboutDialog } from './AboutDialog'
@@ -148,7 +147,6 @@ export function App() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       {showStart && <StartOverlay onDismiss={() => void dismissStart()} />}
-      <LicenseGate />
       <TitleBar
         version={version}
         wizardActive={wizard !== null}
