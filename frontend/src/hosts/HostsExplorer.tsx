@@ -16,6 +16,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { hosts as hostsModel, main } from '../../wailsjs/go/models'
+import { HelpButton } from '../help/HelpButton'
 
 type Role = 'dev' | 'shared' | 'prod'
 
@@ -278,7 +279,10 @@ export function HostsExplorer() {
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <header className="flex items-center justify-between border-b border-border px-6 py-4">
           <div>
-            <h2 className="text-base font-semibold tracking-tight">Hosts</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold tracking-tight">Hosts</h2>
+              <HelpButton slug="adding-a-host" label="Hosts" />
+            </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Remote Linux machines reachable over SSH. Local machine is
               always implicit and doesn&apos;t appear here.

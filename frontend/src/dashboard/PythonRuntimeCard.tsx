@@ -17,6 +17,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { main } from '../../wailsjs/go/models'
+import { HelpButton } from '../help/HelpButton'
 
 type ProgressEvent = {
   featureId: string
@@ -104,7 +105,10 @@ export function PythonRuntimeCard() {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Python runtime</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Python runtime</h2>
+            <HelpButton slug="python-runtime" label="Python runtime" />
+          </div>
           <p className="mt-0.5 max-w-prose text-xs text-muted-foreground">
             Optional Python install for LoRA training, vLLM serving, TensorRT-LLM, and prompt
             compression. Managed via <code className="font-mono">uv</code> at
