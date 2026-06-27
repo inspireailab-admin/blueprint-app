@@ -53,6 +53,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { loadCatalog } from '../planner/catalog'
 import type { Model, Quant } from '../planner/types'
+import { HelpButton } from '../help/HelpButton'
 import type { ActiveHost } from '../App'
 
 const POLL_MS = 2000
@@ -1584,7 +1585,10 @@ function RemoteModelsCard({ host }: { host: { id: string; label: string } }) {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Models on disk</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Models on disk</h2>
+            <HelpButton slug="models-on-disk" label="Models on disk" />
+          </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
             What&apos;s installed on{' '}
             <b className="text-foreground">{host.label}</b>
