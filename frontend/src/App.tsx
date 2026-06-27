@@ -432,12 +432,18 @@ function TitleBar({
             onSelectHost={onSelectHost}
           />
           {wizardActive ? (
+            // Promoted to primary styling. Once the user has clicked into
+            // the wizard, returning to the Dashboard IS the most likely
+            // next action (especially after deploying a model) — the
+            // earlier outline-only button blended into the chrome and
+            // testers reported they couldn't find their way back.
             <button
               type="button"
               onClick={onCloseWizard}
-              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
             >
-              ← Back to Dashboard
+              <span aria-hidden>←</span>
+              Back to Dashboard
             </button>
           ) : (
             <button

@@ -2,7 +2,7 @@
 // minus the URL state. Catalog + planner state are owned by App so that
 // switching tabs doesn't lose the user's filter / selection.
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { familiesIn, findModel } from './catalog'
 import { rankAll } from './rank'
 import type { Model } from './types'
@@ -11,6 +11,7 @@ import { FilterPanel } from './FilterPanel'
 import { ResultsList } from './ResultsList'
 import { DetailPane } from './DetailPane'
 import { HelpMeChoose } from './HelpMeChoose'
+import { Snapshot } from '../../wailsjs/go/main/App'
 
 type Props = {
   models: Model[] | null
@@ -20,6 +21,32 @@ type Props = {
 
 export function PlanExplorer({ models, planner, onContinueToHardware }: Props) {
   const [helpOpen, setHelpOpen] = useState(false)
+  // Total VRAM across detected GPUs (in GB). Used by ResultsList to
+  // render a per-model "fits / tight / won't fit" badge so a new user
+  // can quickly spot a model they can actually run on this machine.
+  // null while loading or when no GPU is detected (CPU-only host).
+  const [userVramGB, setUserVramGB] = useState<number | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const snap = (await Snapshot()) as { gpus?: { vramTotalMB?: number }[] }
+        if (!alive) return
+        const totalMB = (snap.gpus ?? []).reduce(
+          (sum, g) => sum + (g.vramTotalMB ?? 0),
+          0,
+        )
+        if (totalMB > 0) setUserVramGB(Math.round((totalMB / 1024) * 10) / 10)
+      } catch {
+        // Snapshot can fail on machines without an svc available; the
+        // fit-badge just stays hidden, no harm done.
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const ranked = useMemo(
     () => (models ? rankAll(planner.requirements, models) : []),
@@ -50,6 +77,7 @@ export function PlanExplorer({ models, planner, onContinueToHardware }: Props) {
           ranked={ranked}
           selectedId={planner.selectedModelId}
           requirements={planner.requirements}
+          userVramGB={userVramGB}
           onSelect={planner.selectModel}
         />
 
