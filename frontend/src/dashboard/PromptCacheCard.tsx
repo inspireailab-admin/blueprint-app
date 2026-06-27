@@ -19,6 +19,7 @@ import {
   SetPromptCacheConfig,
 } from '../../wailsjs/go/main/App'
 import type { promptcache } from '../../wailsjs/go/models'
+import { HelpButton } from '../help/HelpButton'
 
 export function PromptCacheCard() {
   const [stats, setStats] = useState<promptcache.Stats | null>(null)
@@ -59,7 +60,10 @@ export function PromptCacheCard() {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Semantic prompt cache</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Semantic prompt cache</h2>
+            <HelpButton slug="prompt-cache" label="Prompt cache" />
+          </div>
           <p className="mt-0.5 max-w-prose text-xs text-muted-foreground">
             Returns cached responses when a new prompt is semantically similar to one we&apos;ve
             already answered. Off by default — turn it on once you understand the trade-off

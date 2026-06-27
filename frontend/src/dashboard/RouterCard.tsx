@@ -19,6 +19,7 @@ import {
   SetRouterConfig,
 } from '../../wailsjs/go/main/App'
 import type { router } from '../../wailsjs/go/models'
+import { HelpButton } from '../help/HelpButton'
 
 export function RouterCard() {
   const [config, setConfig] = useState<router.Config | null>(null)
@@ -63,7 +64,10 @@ export function RouterCard() {
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-6 py-4">
         <div>
-          <h2 className="text-base font-semibold tracking-tight">Model routing</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Model routing</h2>
+            <HelpButton slug="semantic-router" label="Semantic router" />
+          </div>
           <p className="mt-0.5 max-w-prose text-xs text-muted-foreground">
             Small-model-first, escalate-on-uncertainty. Every prompt hits the small endpoint
             first; if the response matches an escalation pattern (or the prompt matches a

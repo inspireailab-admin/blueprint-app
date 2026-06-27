@@ -37,6 +37,35 @@ When you do open a PR:
 - **TypeScript**: types over `any`. Components in `frontend/src/<feature>/` colocated with their state.
 - **Commits**: short subject line in present tense (`feat(svc): add /v1/pull`), body explains motivation if non-obvious.
 
+## Adding a help article to a card
+
+Every card / section in the desktop UI gets a `?` icon in its header
+that opens a how-to article on [llmblueprint.ai](https://llmblueprint.ai/how-to)
+in the user's default browser. Two steps to wire one up:
+
+1. **Write the article** at `blueprint-site/content/how-to/<slug>.mdx`
+   with the standard frontmatter (`title`, `date`, `category`,
+   `author`, `excerpt`). Categories for how-to are listed in
+   `blueprint-site/lib/content/types.ts` under `HOWTO_AREAS`. Aim
+   for ~300-600 words structured as **Background → How to use →
+   Common pitfalls**.
+
+2. **Add the button** to the card's header in `frontend/src/`:
+
+   ```tsx
+   import { HelpButton } from '../help/HelpButton'
+
+   // Inside the card's <header>, alongside the title:
+   <div className="flex items-center gap-2">
+     <h2 className="text-base font-semibold tracking-tight">My feature</h2>
+     <HelpButton slug="my-feature" label="My feature" />
+   </div>
+   ```
+
+The slug must match the MDX filename. `BrowserOpenURL` opens the URL
+in the user's default browser; no markdown rendering or content
+bundling happens in the desktop binary itself.
+
 ## Security issues
 
 Don't open public issues for security problems. Email security@inspireailab.com instead.
