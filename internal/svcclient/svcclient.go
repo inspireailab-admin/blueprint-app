@@ -7,7 +7,8 @@
 // we tell it to dial via the SSH client. From the GUI side it looks
 // like a normal HTTP call to 127.0.0.1; the transport routes it
 // through the SSH session.
-
+//
+// Author: Amar Mond.
 package svcclient
 
 import (
@@ -19,6 +20,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -34,6 +36,18 @@ const RemotePort = 17832
 // Relative to the SSH user's home directory.
 const TokenPath = ".blueprint/svc-token"
 
+// TokenCache is the optional cross-session cache svcclient.New
+// consults before paying the SSH-fetch cost for the svc bearer token.
+// Each instance is pre-bound to a specific host by its caller — the
+// svcclient package itself stays ignorant of host identity.
+//
+// A nil TokenCache disables caching entirely (svcclient falls back to
+// fetching the token over SSH on every New).
+type TokenCache interface {
+	Get() (string, bool)
+	Set(token string) error
+}
+
 // Client holds the SSH connection and an HTTP client that tunnels
 // through it. One Client per (host, session).
 type Client struct {
@@ -42,25 +56,85 @@ type Client struct {
 	token string
 }
 
-// New opens an SSH connection to the host, fetches the svc token,
-// and prepares an HTTP client wired through the SSH tunnel.
-func New(ctx context.Context, cfg bpssh.Config) (*Client, error) {
+// New opens an SSH connection to the host and prepares an HTTP client
+// wired through the SSH tunnel. The svc bearer token comes from the
+// optional cache; on miss or 401 we fall back to reading
+// ~/.blueprint/svc-token over SSH and update the cache for next time.
+func New(ctx context.Context, cfg bpssh.Config, cache TokenCache) (*Client, error) {
 	sc, err := bpssh.Dial(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
 
-	tokenBytes, err := sc.ReadFile(ctx, "~/"+TokenPath)
-	if err != nil {
-		_ = sc.Close()
-		return nil, fmt.Errorf("read svc token (is blueprint-svc installed and started?): %w", err)
+	var (
+		token     string
+		fromCache bool
+		freshFromSSH bool
+	)
+	if cache != nil {
+		if cached, ok := cache.Get(); ok && cached != "" {
+			token = cached
+			fromCache = true
+		}
 	}
-	token := strings.TrimSpace(string(tokenBytes))
 	if token == "" {
-		_ = sc.Close()
-		return nil, fmt.Errorf("svc token file is empty")
+		token, err = fetchTokenOverSSH(ctx, sc)
+		if err != nil {
+			_ = sc.Close()
+			return nil, err
+		}
+		freshFromSSH = true
 	}
 
+	c := buildClient(sc, token)
+
+	// Verify only when the token came from cache — a freshly-fetched
+	// token is by definition the current one, and skipping the extra
+	// round-trip keeps cold-connect latency unchanged.
+	if fromCache {
+		if err := c.pingHealth(ctx); err != nil {
+			if !isAuthErr(err) {
+				_ = sc.Close()
+				return nil, err
+			}
+			// Cached token rejected — refetch, rebuild, retry once.
+			token, err = fetchTokenOverSSH(ctx, sc)
+			if err != nil {
+				_ = sc.Close()
+				return nil, err
+			}
+			freshFromSSH = true
+			c = buildClient(sc, token)
+			if err := c.pingHealth(ctx); err != nil {
+				_ = sc.Close()
+				return nil, fmt.Errorf("svc health after token refetch: %w", err)
+			}
+		}
+	}
+
+	// Persist any fresh token to the cache so the next connect skips
+	// the SSH-fetch. Best-effort: an unavailable keychain shouldn't
+	// fail the connection itself.
+	if cache != nil && freshFromSSH {
+		_ = cache.Set(token)
+	}
+
+	return c, nil
+}
+
+func fetchTokenOverSSH(ctx context.Context, sc *bpssh.Client) (string, error) {
+	b, err := sc.ReadFile(ctx, "~/"+TokenPath)
+	if err != nil {
+		return "", fmt.Errorf("read svc token (is blueprint-svc installed and started?): %w", err)
+	}
+	token := strings.TrimSpace(string(b))
+	if token == "" {
+		return "", fmt.Errorf("svc token file is empty")
+	}
+	return token, nil
+}
+
+func buildClient(sc *bpssh.Client, token string) *Client {
 	transport := &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 			return sc.DialTCP(fmt.Sprintf("127.0.0.1:%d", RemotePort))
@@ -71,12 +145,24 @@ func New(ctx context.Context, cfg bpssh.Config) (*Client, error) {
 		MaxIdleConnsPerHost: 1,
 		IdleConnTimeout:     5 * time.Minute,
 	}
-
 	return &Client{
-		ssh:  sc,
-		http: &http.Client{Transport: transport, Timeout: 30 * time.Second},
+		ssh:   sc,
+		http:  &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		token: token,
-	}, nil
+	}
+}
+
+func (c *Client) pingHealth(ctx context.Context) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := c.Health(probeCtx)
+	return err
+}
+
+// isAuthErr matches the "svc HTTP 401: ..." shape do() emits so the
+// cache-refetch path can distinguish a bad token from svc-is-down.
+func isAuthErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "svc HTTP 401")
 }
 
 // Close releases the SSH connection and the HTTP transport pool.
@@ -139,6 +225,32 @@ func (c *Client) Serve(ctx context.Context, payload map[string]any) (map[string]
 func (c *Client) Stop(ctx context.Context) (map[string]any, error) {
 	var out map[string]any
 	if err := c.post(ctx, "/v1/stop", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Pull starts (or attaches to an existing) background download of a
+// model + quant directly onto the remote host. Idempotent — calling
+// twice for the same pair while a download is in flight returns the
+// in-flight state instead of spawning a second downloader. The GUI
+// then polls PullStatus on a short interval to drive a progress UI.
+func (c *Client) Pull(ctx context.Context, modelID, quant string) (map[string]any, error) {
+	payload := map[string]any{"modelId": modelID, "quant": quant}
+	var out map[string]any
+	if err := c.post(ctx, "/v1/pull", payload, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PullStatus returns the current PullState for a (modelID, quant)
+// pair. Errors when the svc has no record of a pull for that pair.
+func (c *Client) PullStatus(ctx context.Context, modelID, quant string) (map[string]any, error) {
+	path := fmt.Sprintf("/v1/pull?modelId=%s&quant=%s",
+		url.QueryEscape(modelID), url.QueryEscape(quant))
+	var out map[string]any
+	if err := c.get(ctx, path, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

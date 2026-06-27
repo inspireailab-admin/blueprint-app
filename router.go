@@ -1,7 +1,8 @@
 // Router IPC surface. The frontend uses this for config CRUD + stats
 // rendering; routing decisions themselves happen client-side in
 // DashboardChat (one IPC roundtrip per chat is enough).
-
+//
+// Author: Amar Mond.
 package main
 
 import (

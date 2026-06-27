@@ -1,5 +1,6 @@
 //go:build !windows
-
+//
+// Author: Amar Mond.
 package pyruntime
 
 import "os/exec"

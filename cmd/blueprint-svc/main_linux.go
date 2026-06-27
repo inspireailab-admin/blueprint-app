@@ -14,7 +14,8 @@
 //   blueprint-svc status         ← prints SCM + supervisor state.
 //   blueprint-svc                ← runs the supervisor inline (what
 //                                  systemd ExecStart= calls).
-
+//
+// Author: Amar Mond.
 package main
 
 import (

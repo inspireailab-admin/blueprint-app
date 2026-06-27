@@ -16,7 +16,8 @@
 // All persistent state (desired config, observed status, child log)
 // lives under %ProgramData%\Blueprint so the desktop app (user) and
 // service (LocalSystem) share a single source of truth.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

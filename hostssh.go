@@ -9,7 +9,8 @@
 // + stderr streamed line-by-line back to the frontend via Wails
 // events. Push-install is the path that actually puts a working
 // blueprint-svc on the remote host.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

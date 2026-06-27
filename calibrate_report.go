@@ -3,7 +3,8 @@
 // That file is the consulting deliverable: workload description,
 // candidate list, Pareto-style ranking, recommended quant, and the
 // headline "we beat the stock pre-quant by Δ%" finding.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

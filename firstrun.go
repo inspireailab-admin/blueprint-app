@@ -4,7 +4,8 @@
 //
 // Implemented as App methods so the frontend can ask + acknowledge
 // without bothering with paths.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

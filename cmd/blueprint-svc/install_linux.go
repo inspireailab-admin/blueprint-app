@@ -6,7 +6,8 @@
 // Requires root. We don't try to elevate ourselves — print a clear
 // error pointing at `sudo`. The Blueprint installer (next iteration)
 // invokes us via sudo / pkexec so the user only authenticates once.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

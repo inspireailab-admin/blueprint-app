@@ -1,4 +1,4 @@
-// Calibration eval runner â€” step 5 of the workflow. For each candidate
+// Calibration eval runner — step 5 of the workflow. For each candidate
 // GGUF (calibrated outputs from this run + any same-target stock
 // pre-quants on disk for an apples-to-apples "ours vs theirs" story),
 // spin a temporary llama-server bound to an ephemeral port, replay the
@@ -6,7 +6,8 @@
 // server and move on.
 //
 // Persists results.json + flips the run's phase to eval-ok on success.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
@@ -36,7 +37,7 @@ import (
 	"github.com/inspireailab-admin/blueprint-cli/pkg/runtime"
 )
 
-// â”€â”€â”€ Public types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Public types ──────────────────────────────────────────────────────────
 
 // EvalCandidate is one GGUF available for evaluation in a given run.
 // The UI presents all candidates as checkboxes; user picks which to
@@ -59,12 +60,12 @@ type EvalRunInput struct {
 	NGpuLayers      int      `json:"nGpuLayers"`      // GPU offload
 }
 
-// â”€â”€â”€ IPC: candidates listing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── IPC: candidates listing ───────────────────────────────────────────────
 
 // ListEvalCandidates surveys what's on disk for a given run: the
 // run's own calibrated GGUFs plus any same-model stock pre-quants the
 // user has already pulled via Deploy. The mapping from llama.cpp
-// target names (Q4_K_M) to catalog keys (q4) is best-effort â€” when
+// target names (Q4_K_M) to catalog keys (q4) is best-effort — when
 // in doubt we surface the file anyway so the user can decide.
 func (a *App) ListEvalCandidates(runID string) ([]EvalCandidate, error) {
 	run, err := calibration.ReadRun(runID)
@@ -95,7 +96,7 @@ func (a *App) ListEvalCandidates(runID string) ([]EvalCandidate, error) {
 		}
 	}
 
-	// Stock pre-quants from the catalog model directory â€” show every
+	// Stock pre-quants from the catalog model directory — show every
 	// .gguf there so user has the full apples-to-apples picture.
 	if run.BaseModelID != "" {
 		modelsRoot, err := paths.Models()
@@ -132,8 +133,8 @@ func sizeOrZero(info os.FileInfo) int64 {
 }
 
 // guessQuantFromFilename pulls the quant token out of a GGUF filename
-// â€” useful for the stock files which embed their quant in the name
-// (e.g. "Qwen2.5-7B-Instruct-Q4_K_M.gguf" â†’ "Q4_K_M").
+// — useful for the stock files which embed their quant in the name
+// (e.g. "Qwen2.5-7B-Instruct-Q4_K_M.gguf" → "Q4_K_M").
 func guessQuantFromFilename(name string) string {
 	stem := strings.TrimSuffix(name, ".gguf")
 	tokens := strings.Split(stem, "-")
@@ -161,9 +162,9 @@ func looksQuantToken(t string) bool {
 	return false
 }
 
-// â”€â”€â”€ IPC: run the eval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── IPC: run the eval ─────────────────────────────────────────────────────
 
-// evalMu serializes eval runs across the process â€” only one
+// evalMu serializes eval runs across the process — only one
 // llama-server lifecycle at a time so we never collide on the
 // ephemeral port or starve the active service of VRAM.
 var evalMu sync.Mutex
@@ -177,7 +178,7 @@ func (a *App) RunCalibrationEval(in EvalRunInput) error {
 		return fmt.Errorf("run %q not found", in.RunID)
 	}
 	if run.Phase != calibration.PhaseQuantizeOK && run.Phase != calibration.PhaseEvalOK {
-		return fmt.Errorf("quantization not finished â€” current phase %q", run.Phase)
+		return fmt.Errorf("quantization not finished — current phase %q", run.Phase)
 	}
 	if run.EvalSetCount == 0 {
 		return fmt.Errorf("upload an eval set first")
@@ -278,7 +279,7 @@ func (a *App) runEvalWorker(
 	a.emitEvalProgress(runID, map[string]any{"stage": "all-done"})
 }
 
-// evalOneCandidate is the meat of the harness â€” boot a llama-server
+// evalOneCandidate is the meat of the harness — boot a llama-server
 // bound to an ephemeral port, replay every eval entry against it,
 // score each response, aggregate, kill the server.
 func (a *App) evalOneCandidate(
@@ -433,7 +434,7 @@ func sourceFromPath(ggufPath, runID string) string {
 	return "stock"
 }
 
-// â”€â”€â”€ HTTP plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── HTTP plumbing ─────────────────────────────────────────────────────────
 
 func waitForHealthy(ctx context.Context, port int, apiKey string, timeout time.Duration) bool {
 	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
@@ -540,7 +541,7 @@ func streamCompletion(
 
 	tEnd := time.Now()
 	if tFirst.IsZero() {
-		// Nothing streamed back â€” count TTFT as the full round trip.
+		// Nothing streamed back — count TTFT as the full round trip.
 		tFirst = tEnd
 	}
 	ttftMs = tFirst.Sub(t0).Milliseconds()
@@ -548,7 +549,7 @@ func streamCompletion(
 	return acc.String(), ttftMs, chunks, genSec, nil
 }
 
-// â”€â”€â”€ Misc helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Misc helpers ──────────────────────────────────────────────────────────
 
 // pickFreePort walks 17150..17300 looking for a port we can bind.
 // Stepping away from 8080 (main service) and the system ephemeral

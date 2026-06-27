@@ -45,10 +45,14 @@ import {
   RemoteChatStream,
   RemoteHostInfo,
   RemoteHostModels,
+  RemoteHostPull,
+  RemoteHostPullStatus,
   RemoteHostServe,
   RemoteHostSnapshot,
   RemoteHostStop,
 } from '../../wailsjs/go/main/App'
+import { loadCatalog } from '../planner/catalog'
+import type { Model, Quant } from '../planner/types'
 import type { ActiveHost } from '../App'
 
 const POLL_MS = 2000
@@ -1468,50 +1472,195 @@ function SamplingPanel({
   )
 }
 
+type PullState = {
+  modelId: string
+  quant: string
+  stage: 'pulling' | 'done' | 'error'
+  bytesDownloaded: number
+  bytesTotal: number
+  bytesPerSecond: number
+  error?: string
+  path?: string
+}
+
 function RemoteModelsCard({ host }: { host: { id: string; label: string } }) {
   const [data, setData] = useState<{ models: RemoteModel[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Pull-to-host state.
+  const [pullOpen, setPullOpen] = useState(false)
+  const [catalog, setCatalog] = useState<Model[] | null>(null)
+  const [pickModelId, setPickModelId] = useState<string>('')
+  const [pickQuant, setPickQuant] = useState<Quant | ''>('')
+  const [active, setActive] = useState<PullState | null>(null)
+  const [pullError, setPullError] = useState<string | null>(null)
+
+  const fetchModels = useCallback(async () => {
+    try {
+      const r = await RemoteHostModels(host.id)
+      setData(r as { models: RemoteModel[] })
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [host.id])
+
   useEffect(() => {
-    let alive = true
     setLoading(true)
-    setError(null)
     setData(null)
+    setError(null)
+    void fetchModels()
+  }, [host.id, fetchModels])
+
+  // Lazy-load the catalog the first time the user opens the picker.
+  useEffect(() => {
+    if (!pullOpen || catalog) return
+    let alive = true
     void (async () => {
       try {
-        const r = await RemoteHostModels(host.id)
-        if (alive) setData(r as { models: RemoteModel[] })
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : String(err))
-      } finally {
-        if (alive) setLoading(false)
+        const cat = await loadCatalog()
+        if (!alive) return
+        // Restrict to models the kernel can actually pull (have ggufFiles).
+        const installable = (cat.models ?? []).filter((m) => m.local?.available)
+        setCatalog(installable)
+      } catch {
+        if (alive) setCatalog([])
       }
     })()
     return () => {
       alive = false
     }
-  }, [host.id])
+  }, [pullOpen, catalog])
 
+  // Poll the active pull's status every second until it leaves the
+  // "pulling" stage. On completion, refresh the disk list and keep
+  // the final state on screen for ~3s so the user sees the outcome.
+  useEffect(() => {
+    if (!active || active.stage !== 'pulling') return
+    let alive = true
+    const id = setInterval(async () => {
+      try {
+        const s = (await RemoteHostPullStatus(host.id, active.modelId, active.quant)) as PullState
+        if (!alive) return
+        setActive(s)
+        if (s.stage === 'done') {
+          void fetchModels()
+          setTimeout(() => alive && setActive(null), 3000)
+        } else if (s.stage === 'error') {
+          setTimeout(() => alive && setActive(null), 5000)
+        }
+      } catch {
+        // Transient — keep polling.
+      }
+    }, 1000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [active, host.id, fetchModels])
+
+  const startPull = useCallback(async () => {
+    if (!pickModelId || !pickQuant) return
+    setPullError(null)
+    try {
+      const s = (await RemoteHostPull(host.id, pickModelId, pickQuant)) as PullState
+      setActive(s)
+      setPullOpen(false)
+    } catch (err) {
+      setPullError(err instanceof Error ? err.message : String(err))
+    }
+  }, [host.id, pickModelId, pickQuant])
+
+  const picked = catalog?.find((m) => m.id === pickModelId)
+  const availableQuants: Quant[] = picked
+    ? (Object.keys(picked.local?.ggufFiles ?? {}) as Quant[])
+    : []
   const totalBytes = data?.models?.reduce((a, m) => a + m.bytesSize, 0) ?? 0
 
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <header className="border-b border-border px-6 py-4">
-        <h2 className="text-base font-semibold tracking-tight">Models on disk</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          What&apos;s installed on{' '}
-          <b className="text-foreground">{host.label}</b>
-          {data && (
-            <>
-              {' · '}
-              {data.models?.length ?? 0} model
-              {(data.models?.length ?? 0) === 1 ? '' : 's'} ·{' '}
-              {humanBytes(totalBytes)}
-            </>
-          )}
-        </p>
+      <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight">Models on disk</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            What&apos;s installed on{' '}
+            <b className="text-foreground">{host.label}</b>
+            {data && (
+              <>
+                {' · '}
+                {data.models?.length ?? 0} model
+                {(data.models?.length ?? 0) === 1 ? '' : 's'} ·{' '}
+                {humanBytes(totalBytes)}
+              </>
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setPullOpen((v) => !v)}
+          className="shrink-0 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+        >
+          {pullOpen ? 'Cancel' : 'Pull to host'}
+        </button>
       </header>
+
+      {pullOpen && (
+        <div className="border-b border-border bg-muted/30 px-6 py-4">
+          <div className="grid grid-cols-[1fr_auto_auto] items-end gap-3">
+            <label className="block">
+              <span className="text-xs font-medium">Model</span>
+              <select
+                value={pickModelId}
+                onChange={(e) => {
+                  setPickModelId(e.target.value)
+                  setPickQuant('')
+                }}
+                className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+              >
+                <option value="">{catalog ? 'Pick a model…' : 'Loading catalog…'}</option>
+                {(catalog ?? []).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium">Quant</span>
+              <select
+                value={pickQuant}
+                onChange={(e) => setPickQuant(e.target.value as Quant)}
+                disabled={!picked}
+                className="mt-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-40"
+              >
+                <option value="">…</option>
+                {availableQuants.map((q) => (
+                  <option key={q} value={q}>
+                    {q.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={startPull}
+              disabled={!pickModelId || !pickQuant}
+              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+            >
+              Pull
+            </button>
+          </div>
+          {pullError && (
+            <p className="mt-2 font-mono text-[11px] text-destructive">{pullError}</p>
+          )}
+        </div>
+      )}
+
+      {active && <PullProgressRow s={active} />}
+
       {loading ? (
         <div className="px-6 py-8 text-sm text-muted-foreground">Loading…</div>
       ) : error ? (
@@ -1521,8 +1670,8 @@ function RemoteModelsCard({ host }: { host: { id: string; label: string } }) {
         </div>
       ) : !data?.models || data.models.length === 0 ? (
         <div className="px-6 py-8 text-sm text-muted-foreground">
-          No models on this host yet. Push-install put the runtime in
-          place; pulling models onto the remote will come in B.5b.
+          No models on this host yet. Use <b>Pull to host</b> above to
+          download one from the catalog directly onto the remote disk.
         </div>
       ) : (
         <ul className="divide-y divide-border">
@@ -1550,6 +1699,51 @@ function RemoteModelsCard({ host }: { host: { id: string; label: string } }) {
         </ul>
       )}
     </section>
+  )
+}
+
+function PullProgressRow({ s }: { s: PullState }) {
+  const pct =
+    s.bytesTotal > 0
+      ? Math.min(100, Math.round((s.bytesDownloaded / s.bytesTotal) * 100))
+      : 0
+  const isDone = s.stage === 'done'
+  const isError = s.stage === 'error'
+  return (
+    <div
+      className={`border-b border-border px-6 py-3 text-xs ${
+        isError ? 'bg-destructive/5' : isDone ? 'bg-emerald-500/5' : 'bg-muted/30'
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="font-medium">
+          {isError ? 'Pull failed' : isDone ? 'Pull complete' : 'Pulling'}
+          {' · '}
+          <span className="font-mono">
+            {s.modelId} ({s.quant.toUpperCase()})
+          </span>
+        </span>
+        {!isError && !isDone && s.bytesTotal > 0 && (
+          <span className="font-mono text-muted-foreground">
+            {humanBytes(s.bytesDownloaded)} / {humanBytes(s.bytesTotal)}
+            {s.bytesPerSecond > 0 && (
+              <> · {humanBytes(s.bytesPerSecond)}/s</>
+            )}
+          </span>
+        )}
+      </div>
+      {!isError && (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-border">
+          <div
+            className={`h-full ${isDone ? 'bg-emerald-500' : 'bg-primary'}`}
+            style={{ width: `${isDone ? 100 : pct}%` }}
+          />
+        </div>
+      )}
+      {isError && s.error && (
+        <p className="mt-1 font-mono text-[11px] text-destructive">{s.error}</p>
+      )}
+    </div>
   )
 }
 

@@ -6,7 +6,8 @@
 //
 // Run from an elevated process. The desktop app accomplishes that by
 // invoking blueprint-svc.exe via ShellExecute with the "runas" verb.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

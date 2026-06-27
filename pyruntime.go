@@ -12,7 +12,8 @@
 // Long-running install runs in a goroutine; the UI listens for
 // pyruntime:install-progress events and reads PythonRuntimeStatus()
 // to know when the install lands.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

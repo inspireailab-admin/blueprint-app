@@ -3,13 +3,15 @@
 //
 // Phase B.1 ships the registry only. Probe (test SSH connect), push-
 // install, and remote svc control plane all come in B.2+.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
 	"sync"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/hosts"
+	"github.com/inspireailab-admin/blueprint-app/internal/secrets"
 )
 
 var (
@@ -39,7 +41,11 @@ func (a *App) UpdateHost(in hosts.Host) error {
 	return getHosts().Update(in)
 }
 
-// RemoveHost drops an entry.
+// RemoveHost drops an entry and clears any keychain-cached svc token
+// bound to it (best-effort — a keychain error doesn't fail the
+// removal itself).
 func (a *App) RemoveHost(id string) error {
+	clearHostClient(id)
+	_ = secrets.Delete(id)
 	return getHosts().Remove(id)
 }

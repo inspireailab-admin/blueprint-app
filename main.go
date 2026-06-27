@@ -7,7 +7,8 @@
 // embedded as static assets. main.go is the entry point: it wires
 // the App struct (in app.go) to the window options and runs the
 // event loop until the user closes the window.
-
+//
+// Author: Amar Mond.
 package main
 
 import (

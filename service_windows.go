@@ -1,21 +1,22 @@
 //go:build windows
 
-// Service IPC surface â€” the desktop app's bridge to the Windows
+// Service IPC surface — the desktop app's bridge to the Windows
 // Service that supervises llama-server.
 //
 // What lives here:
 //
-//   ServiceInfo()        â† combined SCM + supervisor view
-//   InstallService()     â† spawn blueprint-svc.exe via UAC ("runas")
-//   UninstallService()   â† same path, "uninstall" subcommand
-//   ApplyServeConfig()   â† writes service-config.json + restarts SCM
-//   StartManagedServer() â† SCM start
-//   StopManagedServer()  â† SCM stop
+//   ServiceInfo()        ← combined SCM + supervisor view
+//   InstallService()     ← spawn blueprint-svc.exe via UAC ("runas")
+//   UninstallService()   ← same path, "uninstall" subcommand
+//   ApplyServeConfig()   ← writes service-config.json + restarts SCM
+//   StartManagedServer() ← SCM start
+//   StopManagedServer()  ← SCM stop
 //
 // All require Windows. The build tag keeps this file out of macOS /
 // Linux builds; service_other.go provides stubs there so the App
 // struct exposes the same methods regardless.
-
+//
+// Author: Amar Mond.
 package main
 
 import (
@@ -79,7 +80,7 @@ type ServiceInfo struct {
 	// child error.
 	LastError string `json:"lastError,omitempty"`
 
-	// SvcBinExpected is the path the app expects blueprint-svc.exe at â€”
+	// SvcBinExpected is the path the app expects blueprint-svc.exe at —
 	// next to blueprint.exe. UI uses this to surface "missing
 	// blueprint-svc.exe" install errors clearly.
 	SvcBinExpected string `json:"svcBinExpected"`
@@ -93,13 +94,13 @@ type ServiceInfo struct {
 // ServiceInfo returns the combined SCM + supervisor view.
 //
 // CRITICAL: This runs in the desktop app, which is launched by the
-// interactive user â€” not an administrator. The golang.org/x/sys
+// interactive user — not an administrator. The golang.org/x/sys
 // /windows/svc/mgr package's Connect() opens the SCM with
 // SC_MANAGER_ALL_ACCESS, which a non-admin user can't get; the
 // call fails silently and the app falsely reports "not installed."
 // We bypass mgr.Connect entirely and call windows.OpenSCManager
 // directly with SC_MANAGER_CONNECT, which any authenticated user
-// can do â€” enough to query service state.
+// can do — enough to query service state.
 func (a *App) ServiceInfo() ServiceInfo {
 	info := ServiceInfo{}
 
@@ -134,7 +135,7 @@ func (a *App) ServiceInfo() ServiceInfo {
 
 // querySCMState opens the service handle with the lowest possible
 // access flags so it works from a non-elevated process. Returns
-// (state, binaryPath, error) â€” error is set only when the service
+// (state, binaryPath, error) — error is set only when the service
 // is missing or the SCM is unreachable.
 func querySCMState() (string, string, error) {
 	scm, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
@@ -200,7 +201,7 @@ func scmStateFromCode(state uint32) string {
 }
 
 // InstallService kicks off `blueprint-svc.exe install` via UAC. Returns
-// once ShellExecute returns â€” i.e., the user has either accepted or
+// once ShellExecute returns — i.e., the user has either accepted or
 // rejected the elevation prompt. The actual install proceeds in the
 // elevated child; the Dashboard polls ServiceInfo to see when it
 // becomes Installed.
@@ -210,7 +211,7 @@ func (a *App) InstallService() error {
 		return err
 	}
 	if _, err := os.Stat(exePath); err != nil {
-		return fmt.Errorf("blueprint-svc.exe not found at %s â€” build it first (build.ps1)", exePath)
+		return fmt.Errorf("blueprint-svc.exe not found at %s — build it first (build.ps1)", exePath)
 	}
 	return shellExecuteElevated(exePath, "install")
 }
@@ -241,7 +242,7 @@ func (a *App) StopManagedServer() error {
 	return scmControl(scmStop)
 }
 
-// RestartManagedServer is stop + start â€” used after the user changes
+// RestartManagedServer is stop + start — used after the user changes
 // the config (model, quant, ctx size, bind, GPU layers).
 func (a *App) RestartManagedServer() error {
 	if err := scmControl(scmStop); err != nil {
@@ -268,7 +269,7 @@ type ServeConfigInput struct {
 	CtxSize    int    `json:"ctxSize"`
 	NGpuLayers int    `json:"nGpuLayers"`
 
-	// Advanced startup params â€” all optional. Zero / empty values mean
+	// Advanced startup params — all optional. Zero / empty values mean
 	// "leave the llama.cpp default."
 	Threads       int    `json:"threads,omitempty"`
 	BatchSize     int    `json:"batchSize,omitempty"`
@@ -299,7 +300,7 @@ type ServeConfigInput struct {
 }
 
 // LoraAdapterEntry is one .gguf/.bin LoRA adapter discovered on disk.
-// Adapters live under ~/.blueprint/lora/ â€” the user drops trained
+// Adapters live under ~/.blueprint/lora/ — the user drops trained
 // files into that directory and the picker in ServiceCard surfaces
 // them.
 type LoraAdapterEntry struct {
@@ -310,7 +311,7 @@ type LoraAdapterEntry struct {
 
 // ListLoraAdapters scans ~/.blueprint/lora/ for files that look like
 // LoRA adapters (.gguf or .bin). Missing directory returns an empty
-// slice, no error â€” the user just hasn't dropped any in yet.
+// slice, no error — the user just hasn't dropped any in yet.
 func (a *App) ListLoraAdapters() ([]LoraAdapterEntry, error) {
 	root, err := paths.Root()
 	if err != nil {
@@ -379,7 +380,7 @@ func (a *App) ApplyServeConfig(in ServeConfigInput) error {
 			return err
 		}
 		if _, err := os.Stat(modelPath); err != nil {
-			return fmt.Errorf("model GGUF not on disk: %s â€” pull it first", modelPath)
+			return fmt.Errorf("model GGUF not on disk: %s — pull it first", modelPath)
 		}
 	}
 
@@ -410,7 +411,7 @@ func (a *App) ApplyServeConfig(in ServeConfigInput) error {
 		nGpu = 999
 	}
 
-	// Preserve the existing API key if there's one â€” the chat panel
+	// Preserve the existing API key if there's one — the chat panel
 	// has it pinned. Only generate a fresh one on first install.
 	apiKey := ""
 	if prev, err := svcconfig.ReadConfig(); err == nil && prev != nil && prev.APIKey != "" {
@@ -441,7 +442,7 @@ func (a *App) ApplyServeConfig(in ServeConfigInput) error {
 		CtxSize:        ctxSize,
 		NGpuLayers:     nGpu,
 		EnableMetrics:  true,
-		MaxRestarts:    0, // unbounded â€” corporate uptime
+		MaxRestarts:    0, // unbounded — corporate uptime
 		UpdatedAt:      time.Now().UnixMilli(),
 		// Advanced startup params, passed through verbatim.
 		Threads:       in.Threads,
@@ -478,10 +479,10 @@ func (a *App) CurrentServeConfig() *svcconfig.Config {
 	return c
 }
 
-// â”€â”€â”€ Internals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Internals ─────────────────────────────────────────────────────────────
 
 // serviceBinPath returns the path where blueprint-svc.exe is expected
-// to live â€” same directory as the running blueprint.exe.
+// to live — same directory as the running blueprint.exe.
 func serviceBinPath() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -494,7 +495,7 @@ func serviceBinPath() (string, error) {
 // "runas" verb. This pops the UAC dialog; on accept, the child runs
 // with admin token. On reject, returns an error.
 //
-// Doesn't capture stdout â€” UAC-elevated children get their own
+// Doesn't capture stdout — UAC-elevated children get their own
 // console. The desktop app's caller is expected to poll for
 // completion (e.g., ServiceInfo().Installed transitioning to true).
 func shellExecuteElevated(exe, args string) error {
@@ -533,7 +534,7 @@ const (
 
 // scmControl talks to SCM with the lowest-privilege access flags
 // (SC_MANAGER_CONNECT + SERVICE_START/STOP|SERVICE_QUERY_STATUS) so
-// it works for the interactive user â€” provided the service DACL was
+// it works for the interactive user — provided the service DACL was
 // modified at install time to grant Authenticated Users start/stop
 // rights. The installer (cmd/blueprint-svc/install_windows.go) does
 // that via SetNamedSecurityInfo immediately after CreateService.

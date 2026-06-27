@@ -15,6 +15,8 @@
 //   runtime.go   — state, install/uninstall orchestration, manifest
 //                  persistence.
 //   uv.go        — the actual uv subprocess invocations.
+//
+// Author: Amar Mond.
 package pyruntime
 
 // Feature is one user-visible install option.

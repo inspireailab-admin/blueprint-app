@@ -11,7 +11,8 @@
 //   - nvidia-smi polls (monitor.go)
 //   - llama-server supervision (deploy.go)
 //   - any future exec.Command we add
-
+//
+// Author: Amar Mond.
 package main
 
 import (

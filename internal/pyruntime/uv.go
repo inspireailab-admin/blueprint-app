@@ -5,7 +5,8 @@
 // any Python-side feature triggers a download from
 // https://github.com/astral-sh/uv/releases — single static binary, no
 // extraction archive, no installer.
-
+//
+// Author: Amar Mond.
 package pyruntime
 
 import (
@@ -150,6 +151,8 @@ type progressReader struct {
 	onProgress func(int64, int64)
 }
 
+// Read implements io.Reader, fanning each chunk through the registered
+// progress callback so the UI can render a download bar.
 func (p *progressReader) Read(buf []byte) (int, error) {
 	n, err := p.r.Read(buf)
 	if n > 0 {
