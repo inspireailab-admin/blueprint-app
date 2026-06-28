@@ -117,6 +117,21 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
+    # Ask whether the user also wants to wipe their personal Blueprint
+    # data (models / calibration runs / hosts / configs / logs). The
+    # default is No — preserving the user dir is the safe choice for
+    # upgrades and reinstalls, and the directory can hold tens of GB
+    # of downloaded model weights they wouldn't want to re-pull. /SD
+    # IDNO also defaults to No under silent uninstall flags so
+    # unattended runs never accidentally delete a fleet's worth of
+    # GGUFs.
+    MessageBox MB_YESNO|MB_ICONQUESTION \
+        "Also delete your Blueprint user data?$\n$\nThis removes models, calibration runs, configurations, LoRA adapters, and logs from:$\n   $PROFILE\.blueprint$\n$\nThis directory can contain many GB of downloaded model weights. Choose No if you plan to reinstall and want to keep them; choose Yes for a clean removal." \
+        /SD IDNO IDNO skip_userdata
+        DetailPrint "Removing user data at $PROFILE\.blueprint…"
+        RMDir /r "$PROFILE\.blueprint"
+    skip_userdata:
+
     # Stop + unregister the service before tearing down the install dir.
     DetailPrint "Removing Blueprint LLM Service…"
     nsExec::ExecToLog '"$INSTDIR\blueprint-svc.exe" uninstall'
