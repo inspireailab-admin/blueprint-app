@@ -60,6 +60,14 @@ ManifestDPIAware true
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
+
+# Add a "Run Blueprint" checkbox to the install-complete page. Checked
+# by default so the user doesn't have to hunt for the start-menu
+# shortcut after installation. MUI_FINISHPAGE_RUN_NOTCHECKED would
+# leave it unchecked; we want the friction-free "next step is launch
+# the app" flow.
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Run Blueprint now"
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
@@ -117,24 +125,39 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
-    # Ask whether the user also wants to wipe their personal Blueprint
-    # data (models / calibration runs / hosts / configs / logs). The
-    # default is No — preserving the user dir is the safe choice for
-    # upgrades and reinstalls, and the directory can hold tens of GB
-    # of downloaded model weights they wouldn't want to re-pull. /SD
-    # IDNO also defaults to No under silent uninstall flags so
-    # unattended runs never accidentally delete a fleet's worth of
-    # GGUFs.
+    # Stop the Windows Service FIRST. The supervisor holds file handles
+    # in $PROFILE\.blueprint (svc-token, logs) and on the model GGUFs
+    # it's actively serving — if we try to wipe the user data dir
+    # before stopping the service, RMDir leaves files behind silently
+    # and the "delete data" flow appears not to work. Stop-then-wipe
+    # avoids the file-locked-by-service partial-delete bug.
+    DetailPrint "Stopping + removing Blueprint LLM Service…"
+    nsExec::ExecToLog '"$INSTDIR\blueprint-svc.exe" uninstall'
+    # Give the SCM a moment to release handles. ~1s is enough in
+    # practice for SCM_STOP to propagate through the supervisor's
+    # shutdown path.
+    Sleep 1500
+
+    # Now ask whether the user also wants to wipe their personal
+    # Blueprint data. Default is No (safe for upgrades/reinstalls;
+    # the data dir can hold tens of GB of model weights). /SD IDNO
+    # also defaults silent uninstalls to No so unattended runs never
+    # accidentally delete a fleet's worth of GGUFs.
     MessageBox MB_YESNO|MB_ICONQUESTION \
-        "Also delete your Blueprint user data?$\n$\nThis removes models, calibration runs, configurations, LoRA adapters, and logs from:$\n   $PROFILE\.blueprint$\n$\nThis directory can contain many GB of downloaded model weights. Choose No if you plan to reinstall and want to keep them; choose Yes for a clean removal." \
+        "Also delete your Blueprint user data?$\n$\nThis removes models, calibration runs, configurations, LoRA adapters, logs, and the Windows Service supervisor state from:$\n   $PROFILE\.blueprint$\n   $PROGRAMDATA\Blueprint$\n$\nThis directory can contain many GB of downloaded model weights. Choose No if you plan to reinstall and want to keep them; choose Yes for a true clean removal." \
         /SD IDNO IDNO skip_userdata
         DetailPrint "Removing user data at $PROFILE\.blueprint…"
         RMDir /r "$PROFILE\.blueprint"
+        # ALSO wipe %ProgramData%\Blueprint — the service writes its
+        # config (service-config.json) and status (service-status.json)
+        # plus its logs here. If we leave this around, a fresh
+        # reinstall + service-install picks up the previous serve
+        # config and immediately tries to spawn llama-server with a
+        # model path that may not exist post-wipe. Clean both halves
+        # together.
+        DetailPrint "Removing supervisor state at $PROGRAMDATA\Blueprint…"
+        RMDir /r "$PROGRAMDATA\Blueprint"
     skip_userdata:
-
-    # Stop + unregister the service before tearing down the install dir.
-    DetailPrint "Removing Blueprint LLM Service…"
-    nsExec::ExecToLog '"$INSTDIR\blueprint-svc.exe" uninstall'
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
