@@ -19,13 +19,23 @@ func TestPairAndForwardBothWays(t *testing.T) {
 	r := New()
 	host, guest := &memSink{}, &memSink{}
 
-	code, err := r.Register(host)
+	reg, err := r.Register(host)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	sess, err := r.Join(code, guest)
+	sess, err := r.Join(reg.Code, guest)
 	if err != nil {
 		t.Fatalf("join: %v", err)
+	}
+
+	// The host learns the same session via its Paired channel.
+	select {
+	case hs := <-reg.Paired():
+		if hs != sess {
+			t.Fatal("host paired with a different session than the guest")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("host never notified of pairing")
 	}
 
 	if err := sess.FromHost([]byte("hello-agent")); err != nil {
@@ -52,11 +62,11 @@ func TestUnknownCodeRejected(t *testing.T) {
 
 func TestCodeIsSingleUse(t *testing.T) {
 	r := New()
-	code, _ := r.Register(&memSink{})
-	if _, err := r.Join(code, &memSink{}); err != nil {
+	reg, _ := r.Register(&memSink{})
+	if _, err := r.Join(reg.Code, &memSink{}); err != nil {
 		t.Fatalf("first join: %v", err)
 	}
-	if _, err := r.Join(code, &memSink{}); err != ErrUnknownCode {
+	if _, err := r.Join(reg.Code, &memSink{}); err != ErrUnknownCode {
 		t.Fatalf("reused code err = %v, want ErrUnknownCode", err)
 	}
 }
@@ -66,13 +76,22 @@ func TestCodeExpires(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	r.now = func() time.Time { return now }
 
-	code, _ := r.Register(&memSink{})
+	reg, _ := r.Register(&memSink{})
 	now = now.Add(DefaultCodeTTL + time.Second) // past TTL
-	if _, err := r.Join(code, &memSink{}); err != ErrUnknownCode {
+	if _, err := r.Join(reg.Code, &memSink{}); err != ErrUnknownCode {
 		t.Fatalf("expired code err = %v, want ErrUnknownCode", err)
 	}
 	if r.Pending() != 0 {
 		t.Fatalf("expired code should be gc'd, pending = %d", r.Pending())
+	}
+}
+
+func TestCancelDropsPending(t *testing.T) {
+	r := New()
+	reg, _ := r.Register(&memSink{})
+	r.Cancel(reg.Code)
+	if _, err := r.Join(reg.Code, &memSink{}); err != ErrUnknownCode {
+		t.Fatalf("cancelled code err = %v, want ErrUnknownCode", err)
 	}
 }
 
@@ -81,8 +100,8 @@ func TestCodeExpires(t *testing.T) {
 func TestFramesForwardedVerbatim(t *testing.T) {
 	r := New()
 	host, guest := &memSink{}, &memSink{}
-	code, _ := r.Register(host)
-	sess, _ := r.Join(code, guest)
+	reg, _ := r.Register(host)
+	sess, _ := r.Join(reg.Code, guest)
 
 	cipher := []byte{0x00, 0xff, 0x10, 0x00, 0x99, 0x7f}
 	if err := sess.FromHost(cipher); err != nil {
@@ -97,16 +116,16 @@ func TestJoinCodesAreDistinctAndSized(t *testing.T) {
 	r := New()
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {
-		code, err := r.Register(&memSink{})
+		reg, err := r.Register(&memSink{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(code) != 8 {
-			t.Fatalf("code %q len = %d, want 8", code, len(code))
+		if len(reg.Code) != 8 {
+			t.Fatalf("code %q len = %d, want 8", reg.Code, len(reg.Code))
 		}
-		if seen[code] {
-			t.Fatalf("duplicate join code %q", code)
+		if seen[reg.Code] {
+			t.Fatalf("duplicate join code %q", reg.Code)
 		}
-		seen[code] = true
+		seen[reg.Code] = true
 	}
 }

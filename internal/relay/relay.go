@@ -6,8 +6,8 @@
 // It is ZERO-KNOWLEDGE: a frame is a []byte the relay forwards verbatim and
 // never interprets, so end-to-end encryption between the two parties keeps
 // their control traffic and metrics private from the relay operator. The
-// transport (WebSocket-over-TLS on :443) is layered on top; this package is
-// transport-agnostic and unit-testable in-process.
+// transport (WebSocket-over-TLS, see server.go) is layered on top; this file
+// is transport-agnostic and unit-testable in-process.
 package relay
 
 import (
@@ -32,8 +32,8 @@ type Sink interface {
 	Deliver(frame []byte) error
 }
 
-// Session is a paired host+guest link. The transport holds the *Session and
-// pushes inbound frames through FromHost / FromGuest.
+// Session is a paired host+guest link, shared by both sides' connections.
+// The transport pushes inbound frames through FromHost / FromGuest.
 type Session struct {
 	ID    string
 	host  Sink
@@ -46,8 +46,20 @@ func (s *Session) FromHost(frame []byte) error { return s.guest.Deliver(frame) }
 // FromGuest forwards a frame from the guest (agent) to the host (desktop).
 func (s *Session) FromGuest(frame []byte) error { return s.host.Deliver(frame) }
 
+// HostReg is returned by Register. The host holds its connection open and
+// waits on Paired() for a guest to join with the code; both sides then share
+// the delivered Session for forwarding.
+type HostReg struct {
+	Code   string
+	paired chan *Session
+}
+
+// Paired receives exactly one Session when a guest joins with this code.
+func (h *HostReg) Paired() <-chan *Session { return h.paired }
+
 type pending struct {
 	host    Sink
+	paired  chan *Session
 	expires time.Time
 }
 
@@ -56,9 +68,9 @@ type Relay struct {
 	mu      sync.Mutex
 	pending map[string]pending // join code → waiting host
 
-	ttl  time.Duration
-	now  func() time.Time       // injectable clock (tests)
-	gen  func() (string, error) // injectable code generator (tests)
+	ttl time.Duration
+	now func() time.Time       // injectable clock (tests)
+	gen func() (string, error) // injectable code generator (tests)
 }
 
 // New returns a Relay with production defaults.
@@ -72,35 +84,48 @@ func New() *Relay {
 }
 
 // Register puts a host (desktop) in the waiting room and returns a single-use
-// join code the guest (agent) uses to pair. The code expires after the TTL.
-func (r *Relay) Register(host Sink) (string, error) {
+// join code plus a channel that yields the Session once a guest joins.
+func (r *Relay) Register(host Sink) (*HostReg, error) {
 	code, err := r.gen()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
+	reg := &HostReg{Code: code, paired: make(chan *Session, 1)}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.gcLocked()
-	r.pending[code] = pending{host: host, expires: r.now().Add(r.ttl)}
-	return code, nil
+	r.pending[code] = pending{host: host, paired: reg.paired, expires: r.now().Add(r.ttl)}
+	return reg, nil
 }
 
 // Join pairs a guest with the host that registered `code`. The code is
-// single-use — consumed on success. Returns the paired Session.
+// single-use — consumed on success. The paired Session is both returned to
+// the guest and delivered to the host's Paired() channel.
 func (r *Relay) Join(code string, guest Sink) (*Session, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	p, ok := r.pending[code]
 	if !ok || r.now().After(p.expires) {
 		delete(r.pending, code)
+		r.mu.Unlock()
 		return nil, ErrUnknownCode
 	}
 	delete(r.pending, code) // single-use
+	r.mu.Unlock()
+
 	id, err := r.gen()
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, host: p.host, guest: guest}, nil
+	sess := &Session{ID: id, host: p.host, guest: guest}
+	p.paired <- sess // buffered(1) — never blocks
+	return sess, nil
+}
+
+// Cancel drops a pending registration (host disconnected before a guest paired).
+func (r *Relay) Cancel(code string) {
+	r.mu.Lock()
+	delete(r.pending, code)
+	r.mu.Unlock()
 }
 
 // Pending reports how many unpaired codes are currently waiting (for metrics).
