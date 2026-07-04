@@ -31,6 +31,7 @@ type Props = {
   selectedModel: Model | null
   serveConfig: ServeConfig
   onBackToOptimize: () => void
+  onContinueToDashboard: () => void
 }
 
 type RuntimeStatus = { installed: boolean; version: string; binPath: string }
@@ -54,7 +55,12 @@ type DownloadProgress = {
   bps: number
 }
 
-export function DeployExplorer({ selectedModel, serveConfig, onBackToOptimize }: Props) {
+export function DeployExplorer({
+  selectedModel,
+  serveConfig,
+  onBackToOptimize,
+  onContinueToDashboard,
+}: Props) {
   const quant = useMemo(() => serveConfig.quant, [serveConfig.quant])
 
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null)
@@ -145,6 +151,70 @@ export function DeployExplorer({ selectedModel, serveConfig, onBackToOptimize }:
     }
   }, [logLines])
 
+  // Auto-provision: walk runtime → weights → serve without making the
+  // user click each button in turn. Each step fires at most once per
+  // model/quant (guarded by autoRef) so that a user who deliberately
+  // Stops the server isn't fighting an auto-restart, and a failed step
+  // doesn't retry-loop. The manual buttons stay wired as a fallback —
+  // if a step errors, its card re-shows the button so the user can
+  // retry by hand.
+  const autoRef = useRef({ install: false, pull: false, start: false })
+
+  // New model (or quant) selected → allow the auto sequence to run again.
+  useEffect(() => {
+    autoRef.current = { install: false, pull: false, start: false }
+  }, [selectedModel?.id, quant])
+
+  useEffect(() => {
+    if (!selectedModel) return
+    if (runtime === null) return // wait for the first status snapshot
+
+    // Step 1 — runtime.
+    if (!runtime.installed) {
+      const busy =
+        runtimeStage.stage !== 'idle' &&
+        runtimeStage.stage !== 'error' &&
+        runtimeStage.stage !== 'done'
+      if (!autoRef.current.install && runtimeStage.stage !== 'error' && !busy) {
+        autoRef.current.install = true
+        setRuntimeStage({ stage: 'locating' })
+        InstallRuntime()
+      }
+      return
+    }
+
+    // Step 2 — model weights.
+    if (model && !model.present) {
+      if (!autoRef.current.pull && !pullError && !pullProgress) {
+        autoRef.current.pull = true
+        setPullError(null)
+        setPullProgress({ bytes: 0, total: 0, bps: 0 })
+        PullModel(selectedModel.id, quant)
+      }
+      return
+    }
+
+    // Step 3 — serve.
+    if (model?.present && server.state === 'stopped' && !autoRef.current.start) {
+      autoRef.current.start = true
+      StartServe(selectedModel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
+    }
+  }, [
+    selectedModel,
+    quant,
+    runtime,
+    model,
+    server,
+    runtimeStage,
+    pullError,
+    pullProgress,
+    serveConfig,
+  ])
+
+  const setupError = runtimeStage.stage === 'error' || !!pullError
+  const setupComplete =
+    !!runtime?.installed && !!model?.present && server.state === 'running'
+
   if (!selectedModel) {
     return (
       <div className="mt-10 mx-auto max-w-md rounded-2xl border border-dashed border-border bg-muted/30 p-8 text-center">
@@ -166,6 +236,23 @@ export function DeployExplorer({ selectedModel, serveConfig, onBackToOptimize }:
   return (
     <div className="mt-8 space-y-6">
       <SelectedModelBanner model={selectedModel} quant={quant} />
+
+      {!setupComplete && !setupError && (
+        <p className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm text-foreground">
+          <span
+            className="inline-flex h-2 w-2 animate-pulse rounded-full bg-primary"
+            aria-hidden
+          />
+          Setting things up automatically — installing the runtime, pulling the
+          weights, and starting the server. No clicks needed.
+        </p>
+      )}
+      {setupError && (
+        <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2.5 text-sm text-foreground">
+          A setup step didn&apos;t finish — use the button on that card below to
+          retry it.
+        </p>
+      )}
 
       <RuntimeCard
         status={runtime}
@@ -203,6 +290,22 @@ export function DeployExplorer({ selectedModel, serveConfig, onBackToOptimize }:
       {server.state === 'running' && <VerifyChat model={selectedModel} />}
 
       <LogPane lines={logLines} containerRef={logRef} />
+
+      {setupComplete && (
+        <div className="flex items-center justify-between gap-3 border-t border-border pt-5">
+          <p className="text-sm text-muted-foreground">
+            Your model is running and ready — you&apos;re all set.
+          </p>
+          <button
+            type="button"
+            onClick={onContinueToDashboard}
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
+          >
+            Continue to Dashboard
+            <span aria-hidden>→</span>
+          </button>
+        </div>
+      )}
     </div>
   )
 }

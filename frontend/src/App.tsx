@@ -150,6 +150,7 @@ export function App() {
       <TitleBar
         version={version}
         wizardActive={wizard !== null}
+        wizardStep={wizard}
         activeHost={activeHost}
         connectedHosts={connectedHosts}
         onSelectHost={setActiveHost}
@@ -278,6 +279,7 @@ function WizardSurface({
           selectedModel={selectedModel}
           serveConfig={serveConfig}
           onBackToOptimize={onClose}
+          onContinueToDashboard={onClose}
         />
       )}
     </div>
@@ -398,6 +400,7 @@ function CatalogError({ message }: { message: string }) {
 function TitleBar({
   version,
   wizardActive,
+  wizardStep,
   activeHost,
   connectedHosts,
   onSelectHost,
@@ -407,6 +410,7 @@ function TitleBar({
 }: {
   version: main.VersionInfo | null
   wizardActive: boolean
+  wizardStep: WizardStep | null
   activeHost: ActiveHost
   connectedHosts: hostsModel.Host[]
   onSelectHost: (h: ActiveHost) => void
@@ -431,7 +435,14 @@ function TitleBar({
             connectedHosts={connectedHosts}
             onSelectHost={onSelectHost}
           />
-          {wizardActive ? (
+          {wizardActive && wizardStep === 'deploy' ? (
+            // Deploy is the last step of first-time setup. The forward
+            // action ("Continue to Dashboard") lives at the bottom of the
+            // Deploy surface once the server is up, so we drop the top-bar
+            // button here to avoid a competing "Back" affordance mid-setup.
+            // ✕ Cancel in the step rail is still available to bail out.
+            null
+          ) : wizardActive ? (
             // Promoted to primary styling. Once the user has clicked into
             // the wizard, returning to the Dashboard IS the most likely
             // next action (especially after deploying a model) — the

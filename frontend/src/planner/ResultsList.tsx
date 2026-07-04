@@ -131,7 +131,7 @@ function Row({
             ● best fit
           </span>
         )}
-        <FitBadge totalGB={v.totalGB} userVramGB={userVramGB} />
+        <FitBadge totalGB={v.totalGB} weightsGB={v.weightsGB} userVramGB={userVramGB} />
         <span className="ml-auto font-mono text-xs text-muted-foreground">
           {verdict.score}/100
         </span>
@@ -162,45 +162,58 @@ function Row({
   )
 }
 
+const BADGE_BASE =
+  'rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em]'
+const BADGE_RED = 'border-destructive/30 bg-destructive/5 text-destructive'
+const BADGE_AMBER =
+  'border-amber-500/30 bg-amber-500/[0.08] text-amber-700 dark:text-amber-400'
+const BADGE_GREEN = 'border-chart-4/30 bg-chart-4/10 text-chart-4'
+
 /**
- * Renders a colored pill indicating how the model's total VRAM
- * requirement compares to the user's detected GPU memory:
- *   green  ·  fits with comfortable headroom (<70% of available VRAM)
- *   amber  ·  tight fit (70–100% of VRAM — works but no room for
- *             KV-cache spikes or other apps)
- *   red    ·  exceeds available VRAM at this quant
+ * Renders a colored pill indicating how the model's VRAM requirement
+ * compares to the user's detected GPU memory. Severity is keyed off
+ * whether the *weights* fit, not just the headline total — because the
+ * total bakes in a worst-case full-context KV cache that you rarely pay
+ * in practice (shorter context, or KV offloaded to system RAM):
+ *
+ *   red (error)     ·  weights alone exceed VRAM at the smallest quant —
+ *                      the model can't be GPU-resident, so it genuinely
+ *                      won't run acceptably on this machine.
+ *   amber (warning) ·  weights fit but the full-context total spills over
+ *                      VRAM — it runs today if you shorten context or let
+ *                      the KV cache offload to RAM.
+ *   amber (warning) ·  tight fit (70–100% of VRAM — works but no room for
+ *                      KV-cache spikes or other apps).
+ *   green           ·  fits with comfortable headroom (<70% of VRAM).
+ *
  * Hidden when userVramGB is null (no GPU detected or snapshot still
- * loading); a CPU-only host shouldn't see misleading "won't fit"
- * badges on every card.
+ * loading); a CPU-only host shouldn't see misleading badges on every card.
  */
 function FitBadge({
   totalGB,
+  weightsGB,
   userVramGB,
 }: {
   totalGB: number
+  weightsGB: number
   userVramGB: number | null
 }) {
   if (!userVramGB) return null
+  // Weights alone don't fit: no amount of context tuning makes this a
+  // GPU-resident model — the only real error state.
+  if (weightsGB > userVramGB) {
+    return <span className={`${BADGE_BASE} ${BADGE_RED}`}>● needs more VRAM</span>
+  }
   const ratio = totalGB / userVramGB
+  // Weights fit, but the full-context estimate overflows — a warning:
+  // it runs with a shorter context or KV offloaded to RAM.
   if (ratio > 1) {
-    return (
-      <span className="rounded-full border border-destructive/30 bg-destructive/5 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-destructive">
-        ● needs more VRAM
-      </span>
-    )
+    return <span className={`${BADGE_BASE} ${BADGE_AMBER}`}>● tight — trim context</span>
   }
   if (ratio > 0.7) {
-    return (
-      <span className="rounded-full border border-amber-500/30 bg-amber-500/[0.08] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-700 dark:text-amber-400">
-        ● tight fit
-      </span>
-    )
+    return <span className={`${BADGE_BASE} ${BADGE_AMBER}`}>● tight fit</span>
   }
-  return (
-    <span className="rounded-full border border-chart-4/30 bg-chart-4/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-chart-4">
-      ● runs on this machine
-    </span>
-  )
+  return <span className={`${BADGE_BASE} ${BADGE_GREEN}`}>● runs on this machine</span>
 }
 
 function ExcludedRow({ ranked }: { ranked: RankedModel }) {
