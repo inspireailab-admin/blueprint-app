@@ -192,15 +192,31 @@ func (a *App) ServerStatus() ServerStatus {
 	return status
 }
 
+// ServeOptions is the full set of knobs StartServe passes through to
+// llama-server. Only ModelID/Quant are required; the rest have safe
+// defaults and the multi-GPU fields stay empty for single-GPU deploys.
+// See docs/plan-target-aware-deploy.md §7.
+type ServeOptions struct {
+	ModelID    string `json:"modelId"`
+	Quant      string `json:"quant"`
+	CtxSize    int    `json:"ctxSize"`    // --ctx-size; 0 → default 4096
+	NGpuLayers int    `json:"nGpuLayers"` // --n-gpu-layers; <0 → 999 (all)
+
+	// Multi-GPU placement. Emitted only when set, so an unset config serves
+	// exactly as before.
+	SplitMode   string    `json:"splitMode,omitempty"`   // "" | "layer" | "row"
+	TensorSplit []float64 `json:"tensorSplit,omitempty"` // per-GPU proportions
+	MainGPU     int       `json:"mainGpu,omitempty"`     // --main-gpu
+}
+
 // StartServe spawns llama-server against the given model. Returns
 // immediately; log lines stream over deploy:serve-log and state
 // changes over deploy:serve-status.
-//
-// ctxSize controls the llama-server --ctx-size flag (max tokens).
-// Pass 0 for the safe default 4096. nGpuLayers controls --n-gpu-layers
-// (number of transformer layers offloaded to GPU). Pass -1 for 999
-// (offload everything; llama-server clamps to the actual count).
-func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
+func (a *App) StartServe(opts ServeOptions) error {
+	modelID := opts.ModelID
+	quant := opts.Quant
+	ctxSize := opts.CtxSize
+	nGpuLayers := opts.NGpuLayers
 	serveMu.Lock()
 	if serveProc != nil {
 		serveMu.Unlock()
@@ -236,8 +252,7 @@ func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
 		nGpuLayers = 999
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, bin,
+	args := []string{
 		"--model", modelPath,
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(servePort),
@@ -248,7 +263,11 @@ func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
 		// Performance card can show real throughput, active requests,
 		// and lifetime token counts.
 		"--metrics",
-	)
+	}
+	args = append(args, serveSplitArgs(opts)...)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, bin, args...)
 	hideConsole(cmd)
 
 	stdout, err := cmd.StdoutPipe()
@@ -306,6 +325,31 @@ func (a *App) StartServe(modelID, quant string, ctxSize, nGpuLayers int) error {
 	}()
 
 	return nil
+}
+
+// serveSplitArgs builds the multi-GPU llama-server flags from a
+// ServeOptions. Returns nothing for a single-GPU / unset config, so the
+// base command line is unchanged in the common case.
+//
+//   --split-mode layer|row : how to distribute the model across GPUs
+//   --tensor-split a,b,...  : per-GPU proportions (∝ VRAM)
+//   --main-gpu i            : GPU holding non-split tensors (and KV in row mode)
+func serveSplitArgs(opts ServeOptions) []string {
+	var args []string
+	if opts.SplitMode == "layer" || opts.SplitMode == "row" {
+		args = append(args, "--split-mode", opts.SplitMode)
+	}
+	if len(opts.TensorSplit) > 0 {
+		parts := make([]string, len(opts.TensorSplit))
+		for i, f := range opts.TensorSplit {
+			parts[i] = strconv.FormatFloat(f, 'g', -1, 64)
+		}
+		args = append(args, "--tensor-split", strings.Join(parts, ","))
+	}
+	if opts.MainGPU > 0 {
+		args = append(args, "--main-gpu", strconv.Itoa(opts.MainGPU))
+	}
+	return args
 }
 
 // StopServe terminates the supervised llama-server process. Returns nil

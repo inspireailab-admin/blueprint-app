@@ -123,10 +123,15 @@ export function MaintainExplorer() {
           }
           // Restart uses 0 / -1 sentinels — deploy.go interprets these
           // as the safe defaults (4096 ctx, all GPU layers). Maintain
-          // doesn't have the Optimize tab's serveConfig in scope; if
-          // the user wants different values, they restart through
-          // Deploy.
-          await StartServe(server.modelId, server.quant, 0, -1)
+          // doesn't have the Optimize serveConfig or a hardware profile in
+          // scope, so this restart applies no multi-GPU split; for a split
+          // (or other tuning) the user restarts through Deploy.
+          await StartServe({
+            modelId: server.modelId,
+            quant: server.quant,
+            ctxSize: 0,
+            nGpuLayers: -1,
+          })
           setBusy(null)
         }}
       />

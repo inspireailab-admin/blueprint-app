@@ -20,7 +20,7 @@ type Props = {
   catalogAsOf: string
   onUpdate: (patch: Partial<Requirements>) => void
   onBackToPlan: () => void
-  onContinueToDeploy: () => void
+  onContinueToOptimize: () => void
 }
 
 export function HardwareExplorer({
@@ -29,7 +29,7 @@ export function HardwareExplorer({
   catalogAsOf,
   onUpdate,
   onBackToPlan,
-  onContinueToDeploy,
+  onContinueToOptimize,
 }: Props) {
   const quant = selectedModel
     ? requirements.weightQuant ?? smallestQuant(selectedModel)
@@ -113,7 +113,7 @@ export function HardwareExplorer({
         </button>
         <button
           type="button"
-          onClick={onContinueToDeploy}
+          onClick={onContinueToOptimize}
           className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
         >
           Continue → Optimize

@@ -13,7 +13,7 @@ import { PlanExplorer } from './planner/PlanExplorer'
 import { HardwareExplorer } from './hardware/HardwareExplorer'
 import { DashboardExplorer } from './dashboard/DashboardExplorer'
 import { StartOverlay } from './start/StartOverlay'
-import type { ServeConfig } from './optimize/OptimizeExplorer'
+import { OptimizeExplorer, type ServeConfig } from './optimize/OptimizeExplorer'
 import { DeployExplorer } from './deploy/DeployExplorer'
 import { AboutDialog } from './AboutDialog'
 import { smallestQuant } from './planner/vram'
@@ -25,7 +25,7 @@ import { smallestQuant } from './planner/vram'
 // The "+ Add new LLM" button in the title bar opens the wizard; the
 // Dashboard is the home and the user lives there.
 
-type WizardStep = 'plan' | 'hardware' | 'deploy'
+type WizardStep = 'plan' | 'hardware' | 'optimize' | 'deploy'
 
 /**
  * ActiveHost = which machine the Dashboard's queries target.
@@ -175,6 +175,7 @@ export function App() {
                 planner={planner}
                 catalogAsOf={catalogAsOf}
                 serveConfig={serveConfig}
+                onServeConfigChange={setServeConfig}
                 onSetStep={setWizard}
                 onClose={closeWizard}
               />
@@ -206,6 +207,7 @@ function WizardSurface({
   planner,
   catalogAsOf,
   serveConfig,
+  onServeConfigChange,
   onSetStep,
   onClose,
 }: {
@@ -215,13 +217,15 @@ function WizardSurface({
   planner: ReturnType<typeof usePlannerState>
   catalogAsOf: string
   serveConfig: ServeConfig
+  onServeConfigChange: (c: ServeConfig) => void
   onSetStep: (s: WizardStep) => void
   onClose: () => void
 }) {
   const steps: { id: WizardStep; label: string }[] = [
     { id: 'plan', label: '1. Plan' },
     { id: 'hardware', label: '2. Hardware' },
-    { id: 'deploy', label: '3. Deploy' },
+    { id: 'optimize', label: '3. Optimize' },
+    { id: 'deploy', label: '4. Deploy' },
   ]
   return (
     <div>
@@ -271,6 +275,15 @@ function WizardSurface({
           catalogAsOf={catalogAsOf}
           onUpdate={planner.update}
           onBackToPlan={() => onSetStep('plan')}
+          onContinueToOptimize={() => onSetStep('optimize')}
+        />
+      )}
+      {step === 'optimize' && (
+        <OptimizeExplorer
+          selectedModel={selectedModel}
+          config={serveConfig}
+          onChange={onServeConfigChange}
+          onBackToHardware={() => onSetStep('hardware')}
           onContinueToDeploy={() => onSetStep('deploy')}
         />
       )}
@@ -278,7 +291,7 @@ function WizardSurface({
         <DeployExplorer
           selectedModel={selectedModel}
           serveConfig={serveConfig}
-          onBackToOptimize={onClose}
+          onBackToOptimize={() => onSetStep('optimize')}
           onContinueToDashboard={onClose}
         />
       )}

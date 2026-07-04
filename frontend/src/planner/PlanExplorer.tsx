@@ -12,6 +12,7 @@ import { ResultsList } from './ResultsList'
 import { DetailPane } from './DetailPane'
 import { HelpMeChoose } from './HelpMeChoose'
 import { Snapshot } from '../../wailsjs/go/main/App'
+import { hardwareFromSnapshot, type HardwareProfile } from './hardware'
 
 type Props = {
   models: Model[] | null
@@ -21,23 +22,19 @@ type Props = {
 
 export function PlanExplorer({ models, planner, onContinueToHardware }: Props) {
   const [helpOpen, setHelpOpen] = useState(false)
-  // Total VRAM across detected GPUs (in GB). Used by ResultsList to
-  // render a per-model "fits / tight / won't fit" badge so a new user
-  // can quickly spot a model they can actually run on this machine.
-  // null while loading or when no GPU is detected (CPU-only host).
-  const [userVramGB, setUserVramGB] = useState<number | null>(null)
+  // Detected hardware (per-GPU VRAM + system RAM). Feeds ResultsList's
+  // placement badge so a new user can see how — single GPU, split across
+  // several, offloaded, or not at all — each model runs on this machine.
+  // null while loading or when Snapshot is unavailable → badges stay hidden.
+  const [hardware, setHardware] = useState<HardwareProfile | null>(null)
 
   useEffect(() => {
     let alive = true
     void (async () => {
       try {
-        const snap = (await Snapshot()) as { gpus?: { vramTotalMB?: number }[] }
+        const snap = await Snapshot()
         if (!alive) return
-        const totalMB = (snap.gpus ?? []).reduce(
-          (sum, g) => sum + (g.vramTotalMB ?? 0),
-          0,
-        )
-        if (totalMB > 0) setUserVramGB(Math.round((totalMB / 1024) * 10) / 10)
+        setHardware(hardwareFromSnapshot(snap))
       } catch {
         // Snapshot can fail on machines without an svc available; the
         // fit-badge just stays hidden, no harm done.
@@ -77,7 +74,7 @@ export function PlanExplorer({ models, planner, onContinueToHardware }: Props) {
           ranked={ranked}
           selectedId={planner.selectedModelId}
           requirements={planner.requirements}
-          userVramGB={userVramGB}
+          hardware={hardware}
           onSelect={planner.selectModel}
         />
 

@@ -21,12 +21,16 @@ import {
   PullModel,
   RuntimeStatus as RuntimeStatusFn,
   ServerStatus as ServerStatusFn,
+  Snapshot,
   StartServe,
   StopServe,
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import type { Model } from '../planner/types'
 import type { ServeConfig } from '../optimize/OptimizeExplorer'
+import { computeVram } from '../planner/vram'
+import { hardwareFromSnapshot, type HardwareProfile } from '../planner/hardware'
+import { planPlacement, placementToServeSplit } from '../planner/placement'
 import { VerifyChat } from './VerifyChat'
 
 type Props = {
@@ -73,6 +77,7 @@ export function DeployExplorer({
   const [pullProgress, setPullProgress] = useState<DownloadProgress | null>(null)
   const [pullError, setPullError] = useState<string | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
+  const [hardware, setHardware] = useState<HardwareProfile | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
   const refetchAll = useCallback(async () => {
@@ -153,6 +158,48 @@ export function DeployExplorer({
     }
   }, [logLines])
 
+  // Detect the target's GPUs once, so serve can auto-split a model across
+  // them when one GPU isn't enough (docs/plan-target-aware-deploy.md §7).
+  useEffect(() => {
+    Snapshot()
+      .then((s) => setHardware(hardwareFromSnapshot(s)))
+      .catch(() => {
+        /* no snapshot → no auto-split; single-GPU/CPU serve as before */
+      })
+  }, [])
+
+  // Build the ServeOptions for StartServe. An explicit split in serveConfig
+  // (a future expert override) wins; otherwise we auto-compute the placement
+  // from detected hardware and split only when the model needs it. On a
+  // single-GPU / CPU host this returns no split flags — identical to before.
+  const buildServeOpts = useCallback(
+    (model: Model) => {
+      const base = {
+        modelId: model.id,
+        quant,
+        ctxSize: serveConfig.ctxSize,
+        nGpuLayers: serveConfig.nGpuLayers,
+      }
+      if (serveConfig.tensorSplit && serveConfig.tensorSplit.length > 0) {
+        return {
+          ...base,
+          splitMode: serveConfig.splitMode ?? 'layer',
+          tensorSplit: serveConfig.tensorSplit,
+          mainGpu: serveConfig.mainGpu ?? 0,
+        }
+      }
+      const v = computeVram({
+        model,
+        weightQuant: quant,
+        contextLength: serveConfig.ctxSize || 4096,
+        concurrency: 1,
+        kvElement: 'fp16',
+      })
+      return { ...base, ...placementToServeSplit(planPlacement(v, hardware)) }
+    },
+    [quant, serveConfig, hardware],
+  )
+
   // Auto-provision: walk runtime → weights → serve without making the
   // user click each button in turn. Each step fires at most once per
   // model/quant (guarded by autoRef) so that a user who deliberately
@@ -211,7 +258,7 @@ export function DeployExplorer({
             s.state === 'running' ? s : { ...s, state: 'running', port: s.port ?? 8080 },
           )
         } else {
-          StartServe(sel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
+          StartServe(buildServeOpts(sel))
         }
       })
     }
@@ -225,6 +272,7 @@ export function DeployExplorer({
     pullError,
     pullProgress,
     serveConfig,
+    buildServeOpts,
   ])
 
   const setupError = runtimeStage.stage === 'error' || !!pullError
@@ -313,9 +361,7 @@ export function DeployExplorer({
           setPullProgress({ bytes: 0, total: 0, bps: 0 })
           PullModel(selectedModel.id, quant)
         }}
-        onRetryServe={() =>
-          StartServe(selectedModel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
-        }
+        onRetryServe={() => StartServe(buildServeOpts(selectedModel))}
       />
 
       <CollapsibleLog key="log-setup" lines={logLines} containerRef={logRef} defaultOpen />

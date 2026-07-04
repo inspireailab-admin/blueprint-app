@@ -2,17 +2,20 @@ import type { RankedModel, Requirements } from './types'
 import { computeVram, smallestQuant } from './vram'
 import { LICENSE_LABEL } from './rank'
 import { DEFAULT_REQUIREMENTS } from './state'
+import type { HardwareProfile } from './hardware'
+import { totalVramGB } from './hardware'
+import { planPlacement, type PlacementPlan } from './placement'
 
 type Props = {
   ranked: RankedModel[]
   selectedId: string | null
   requirements: Requirements
   /**
-   * Total VRAM on this machine (in GB) for the fit-vs-this-GPU badge.
-   * null = unknown (no GPU detected, or snapshot not yet loaded) — in
-   * that case the badge stays hidden so we don't show meaningless data.
+   * Detected hardware for the fit badge — per-GPU VRAM + system RAM. Drives
+   * the single-GPU / multi-GPU / offload / CPU / won't-fit placement badge.
+   * null = unknown (snapshot not yet loaded) → badges stay hidden.
    */
-  userVramGB: number | null
+  hardware: HardwareProfile | null
   onSelect: (id: string) => void
 }
 
@@ -20,7 +23,7 @@ export function ResultsList({
   ranked,
   selectedId,
   requirements,
-  userVramGB,
+  hardware,
   onSelect,
 }: Props) {
   const included = ranked.filter((r) => !r.verdict.excludedBy)
@@ -48,9 +51,15 @@ export function ResultsList({
         <ActiveFilterSummary requirements={requirements} />
       </div>
 
-      {userVramGB && (
+      {hardware && hardware.gpus.length > 0 && (
         <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-          Sizing fit against your GPU: <span className="text-foreground">{userVramGB} GB VRAM detected</span>
+          Sizing fit against your hardware:{' '}
+          <span className="text-foreground">
+            {hardware.gpus.length === 1
+              ? '1 GPU'
+              : `${hardware.gpus.length} GPUs`}{' '}
+            · {round1(totalVramGB(hardware))} GB VRAM detected
+          </span>
         </p>
       )}
 
@@ -60,7 +69,7 @@ export function ResultsList({
             <Row
               ranked={r}
               requirements={requirements}
-              userVramGB={userVramGB}
+              hardware={hardware}
               selected={selectedId === r.model.id}
               isBestFit={r.model.id === topIncludedId}
               onSelect={() => onSelect(r.model.id)}
@@ -90,14 +99,14 @@ export function ResultsList({
 function Row({
   ranked,
   requirements,
-  userVramGB,
+  hardware,
   selected,
   isBestFit,
   onSelect,
 }: {
   ranked: RankedModel
   requirements: Requirements
-  userVramGB: number | null
+  hardware: HardwareProfile | null
   selected: boolean
   isBestFit: boolean
   onSelect: () => void
@@ -111,6 +120,7 @@ function Row({
     concurrency: requirements.concurrency,
     kvElement: requirements.kvElement ?? 'fp16',
   })
+  const plan = planPlacement(v, hardware)
 
   return (
     <button
@@ -131,7 +141,7 @@ function Row({
             ● best fit
           </span>
         )}
-        <FitBadge totalGB={v.totalGB} weightsGB={v.weightsGB} userVramGB={userVramGB} />
+        <FitBadge plan={plan} />
         <span className="ml-auto font-mono text-xs text-muted-foreground">
           {verdict.score}/100
         </span>
@@ -168,52 +178,47 @@ const BADGE_RED = 'border-destructive/30 bg-destructive/5 text-destructive'
 const BADGE_AMBER =
   'border-amber-500/30 bg-amber-500/[0.08] text-amber-700 dark:text-amber-400'
 const BADGE_GREEN = 'border-chart-4/30 bg-chart-4/10 text-chart-4'
+const BADGE_BLUE = 'border-primary/30 bg-primary/10 text-primary'
+const BADGE_MUTED = 'border-border bg-muted text-muted-foreground'
 
 /**
- * Renders a colored pill indicating how the model's VRAM requirement
- * compares to the user's detected GPU memory. Severity is keyed off
- * whether the *weights* fit, not just the headline total — because the
- * total bakes in a worst-case full-context KV cache that you rarely pay
- * in practice (shorter context, or KV offloaded to system RAM):
+ * Renders a colored pill from the placement plan (planner/placement.ts),
+ * indicating how — and whether — the model fits the detected hardware:
  *
- *   red (error)     ·  weights alone exceed VRAM at the smallest quant —
- *                      the model can't be GPU-resident, so it genuinely
- *                      won't run acceptably on this machine.
- *   amber (warning) ·  weights fit but the full-context total spills over
- *                      VRAM — it runs today if you shorten context or let
- *                      the KV cache offload to RAM.
- *   amber (warning) ·  tight fit (70–100% of VRAM — works but no room for
- *                      KV-cache spikes or other apps).
- *   green           ·  fits with comfortable headroom (<70% of VRAM).
+ *   green  · single-gpu  · fits one GPU with headroom (<70%)
+ *   amber  · single-gpu  · tight fit on one GPU (70–100%)
+ *   blue   · multi-gpu   · weights split across N GPUs (GPU-resident)
+ *   amber  · offload     · weights on GPU, full-context total needs trimming
+ *   muted  · cpu-only    · weights fit only in RAM — runs mostly on CPU, slow
+ *   red    · no-fit      · weights don't fit GPU(s)+RAM — won't run here
  *
- * Hidden when userVramGB is null (no GPU detected or snapshot still
- * loading); a CPU-only host shouldn't see misleading badges on every card.
+ * Hidden when the plan is null (no hardware detected / snapshot still
+ * loading) so a CPU-only host doesn't get misleading badges on every card.
  */
-function FitBadge({
-  totalGB,
-  weightsGB,
-  userVramGB,
-}: {
-  totalGB: number
-  weightsGB: number
-  userVramGB: number | null
-}) {
-  if (!userVramGB) return null
-  // Weights alone don't fit: no amount of context tuning makes this a
-  // GPU-resident model — the only real error state.
-  if (weightsGB > userVramGB) {
-    return <span className={`${BADGE_BASE} ${BADGE_RED}`}>● needs more VRAM</span>
+function FitBadge({ plan }: { plan: PlacementPlan | null }) {
+  if (!plan) return null
+  switch (plan.mode) {
+    case 'single-gpu':
+      return (plan.fillRatio ?? 0) > 0.7 ? (
+        <span className={`${BADGE_BASE} ${BADGE_AMBER}`}>● tight fit</span>
+      ) : (
+        <span className={`${BADGE_BASE} ${BADGE_GREEN}`}>● runs on this machine</span>
+      )
+    case 'multi-gpu':
+      return (
+        <span className={`${BADGE_BASE} ${BADGE_BLUE}`}>
+          ● runs across {plan.gpuIndices.length} GPUs
+        </span>
+      )
+    case 'partial-offload':
+      return (
+        <span className={`${BADGE_BASE} ${BADGE_AMBER}`}>● tight — trim context</span>
+      )
+    case 'cpu-only':
+      return <span className={`${BADGE_BASE} ${BADGE_MUTED}`}>● mostly CPU — slow</span>
+    case 'no-fit':
+      return <span className={`${BADGE_BASE} ${BADGE_RED}`}>● needs more VRAM</span>
   }
-  const ratio = totalGB / userVramGB
-  // Weights fit, but the full-context estimate overflows — a warning:
-  // it runs with a shorter context or KV offloaded to RAM.
-  if (ratio > 1) {
-    return <span className={`${BADGE_BASE} ${BADGE_AMBER}`}>● tight — trim context</span>
-  }
-  if (ratio > 0.7) {
-    return <span className={`${BADGE_BASE} ${BADGE_AMBER}`}>● tight fit</span>
-  }
-  return <span className={`${BADGE_BASE} ${BADGE_GREEN}`}>● runs on this machine</span>
 }
 
 function ExcludedRow({ ranked }: { ranked: RankedModel }) {
@@ -226,6 +231,10 @@ function ExcludedRow({ ranked }: { ranked: RankedModel }) {
       <p className="mt-1 text-sm text-muted-foreground">{verdict.reason}</p>
     </div>
   )
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10
 }
 
 function formatTokens(n: number): string {
