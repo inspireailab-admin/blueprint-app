@@ -1,16 +1,18 @@
-// Deploy tab — the only place in the app where actual native work
-// happens. Three cards walk the user through:
+// Deploy tab — the last step of the install-LLM wizard, and the only
+// place in the app where actual native work happens. It has two phases:
 //
-//   Runtime  → install llama.cpp (download + extract)
-//   Model    → pull the GGUF for the selected model + quant
-//   Serve    → spawn llama-server, expose the API endpoint
+//   Provisioning → a compact checklist walks itself through
+//                  runtime (install llama.cpp) → weights (pull the GGUF)
+//                  → serve (spawn llama-server). This runs automatically
+//                  on arrival; the checklist IS the content here.
+//   Ready        → once the server is up, the setup detail collapses to
+//                  a slim "model is live" strip and Verify becomes the
+//                  hero: the user talks to their model, then continues
+//                  to the Dashboard.
 //
-// A log tail at the bottom streams llama-server stdout/stderr lines so
-// the user can see what's going on (and copy errors if something fails).
-//
-// All four operations are kernel-side: the Go App methods (in deploy.go)
-// wrap pkg/runtime + pkg/catalog + pkg/download and emit Wails events
-// that this component listens for.
+// All the heavy operations are kernel-side: the Go App methods (in
+// deploy.go) wrap pkg/runtime + pkg/catalog + pkg/download and emit
+// Wails events that this component listens for.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -155,9 +157,8 @@ export function DeployExplorer({
   // user click each button in turn. Each step fires at most once per
   // model/quant (guarded by autoRef) so that a user who deliberately
   // Stops the server isn't fighting an auto-restart, and a failed step
-  // doesn't retry-loop. The manual buttons stay wired as a fallback —
-  // if a step errors, its card re-shows the button so the user can
-  // retry by hand.
+  // doesn't retry-loop. The checklist keeps a Retry on any failed step
+  // as a fallback.
   const autoRef = useRef({ install: false, pull: false, start: false })
 
   // New model (or quant) selected → allow the auto sequence to run again.
@@ -197,7 +198,22 @@ export function DeployExplorer({
     // Step 3 — serve.
     if (model?.present && server.state === 'stopped' && !autoRef.current.start) {
       autoRef.current.start = true
-      StartServe(selectedModel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
+      // Guard against a duplicate server: the supervisor occasionally
+      // reports "stopped" while a llama-server is actually live on the
+      // port (a leftover process, or state-tracking lag). Probe /health
+      // first — only StartServe if nothing answers; otherwise reconcile
+      // the UI to running so we advance to Verify instead of spawning a
+      // second server that would fight for the port.
+      const sel = selectedModel
+      void serverAlreadyUp().then((up) => {
+        if (up) {
+          setServer((s) =>
+            s.state === 'running' ? s : { ...s, state: 'running', port: s.port ?? 8080 },
+          )
+        } else {
+          StartServe(sel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
+        }
+      })
     }
   }, [
     selectedModel,
@@ -233,68 +249,25 @@ export function DeployExplorer({
     )
   }
 
-  return (
-    <div className="mt-8 space-y-6">
-      <SelectedModelBanner model={selectedModel} quant={quant} />
+  if (setupComplete) {
+    // ─── Ready phase ──────────────────────────────────────────────
+    // Setup detail collapses to a slim strip; Verify is the hero.
+    return (
+      <div className="mt-8 space-y-5">
+        <ReadyStrip
+          model={selectedModel}
+          quant={quant}
+          runtime={runtime}
+          modelStatus={model}
+          server={server}
+          onStop={() => StopServe()}
+        />
 
-      {!setupComplete && !setupError && (
-        <p className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm text-foreground">
-          <span
-            className="inline-flex h-2 w-2 animate-pulse rounded-full bg-primary"
-            aria-hidden
-          />
-          Setting things up automatically — installing the runtime, pulling the
-          weights, and starting the server. No clicks needed.
-        </p>
-      )}
-      {setupError && (
-        <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2.5 text-sm text-foreground">
-          A setup step didn&apos;t finish — use the button on that card below to
-          retry it.
-        </p>
-      )}
+        <VerifyChat model={selectedModel} />
 
-      <RuntimeCard
-        status={runtime}
-        stage={runtimeStage}
-        progress={runtimeProgress}
-        onInstall={() => {
-          setRuntimeStage({ stage: 'locating' })
-          InstallRuntime()
-        }}
-      />
-
-      <ModelCard
-        model={selectedModel}
-        quant={quant}
-        status={model}
-        progress={pullProgress}
-        error={pullError}
-        onPull={() => {
-          setPullError(null)
-          setPullProgress({ bytes: 0, total: 0, bps: 0 })
-          PullModel(selectedModel.id, quant)
-        }}
-      />
-
-      <ServeCard
-        status={server}
-        runtimeReady={!!runtime?.installed}
-        modelReady={!!model?.present}
-        onStart={() =>
-          StartServe(selectedModel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
-        }
-        onStop={() => StopServe()}
-      />
-
-      {server.state === 'running' && <VerifyChat model={selectedModel} />}
-
-      <LogPane lines={logLines} containerRef={logRef} />
-
-      {setupComplete && (
-        <div className="flex items-center justify-between gap-3 border-t border-border pt-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
           <p className="text-sm text-muted-foreground">
-            Your model is running and ready — you&apos;re all set.
+            Sent a test prompt and happy with it? You&apos;re all set.
           </p>
           <button
             type="button"
@@ -305,12 +278,52 @@ export function DeployExplorer({
             <span aria-hidden>→</span>
           </button>
         </div>
-      )}
+
+        <CollapsibleLog key="log-ready" lines={logLines} containerRef={logRef} defaultOpen={false} />
+      </div>
+    )
+  }
+
+  // ─── Provisioning phase ─────────────────────────────────────────
+  // The checklist is the content; it drives itself. Log stays open so
+  // the model-load output is visible while the server comes up.
+  const serveAttempted = autoRef.current.start
+  return (
+    <div className="mt-8 space-y-5">
+      <SelectedModelBanner model={selectedModel} quant={quant} />
+
+      <SetupChecklist
+        error={setupError}
+        runtime={runtime}
+        runtimeStage={runtimeStage}
+        runtimeProgress={runtimeProgress}
+        model={selectedModel}
+        quant={quant}
+        modelStatus={model}
+        pullProgress={pullProgress}
+        pullError={pullError}
+        server={server}
+        serveAttempted={serveAttempted}
+        onRetryRuntime={() => {
+          setRuntimeStage({ stage: 'locating' })
+          InstallRuntime()
+        }}
+        onRetryPull={() => {
+          setPullError(null)
+          setPullProgress({ bytes: 0, total: 0, bps: 0 })
+          PullModel(selectedModel.id, quant)
+        }}
+        onRetryServe={() =>
+          StartServe(selectedModel.id, quant, serveConfig.ctxSize, serveConfig.nGpuLayers)
+        }
+      />
+
+      <CollapsibleLog key="log-setup" lines={logLines} containerRef={logRef} defaultOpen />
     </div>
   )
 }
 
-// ─── UI pieces ────────────────────────────────────────────────────────────
+// ─── Provisioning UI ────────────────────────────────────────────────────────
 
 function SelectedModelBanner({ model, quant }: { model: Model; quant: string }) {
   return (
@@ -324,253 +337,403 @@ function SelectedModelBanner({ model, quant }: { model: Model; quant: string }) 
   )
 }
 
-function RuntimeCard({
-  status,
-  stage,
-  progress,
-  onInstall,
+/**
+ * The provisioning checklist. Renders the three deploy steps as compact
+ * rows (icon · title · one-line detail · inline progress), instead of
+ * three tall cards. Each step derives its own state from props; a failed
+ * step exposes a Retry so the user can recover without leaving the flow.
+ */
+function SetupChecklist({
+  error,
+  runtime,
+  runtimeStage,
+  runtimeProgress,
+  model,
+  quant,
+  modelStatus,
+  pullProgress,
+  pullError,
+  server,
+  serveAttempted,
+  onRetryRuntime,
+  onRetryPull,
+  onRetryServe,
 }: {
-  status: RuntimeStatus | null
-  stage: RuntimeStage
-  progress: DownloadProgress | null
-  onInstall: () => void
+  error: boolean
+  runtime: RuntimeStatus | null
+  runtimeStage: RuntimeStage
+  runtimeProgress: DownloadProgress | null
+  model: Model
+  quant: string
+  modelStatus: ModelStatus | null
+  pullProgress: DownloadProgress | null
+  pullError: string | null
+  server: ServerStatus
+  serveAttempted: boolean
+  onRetryRuntime: () => void
+  onRetryPull: () => void
+  onRetryServe: () => void
 }) {
-  const busy = stage.stage !== 'idle' && stage.stage !== 'done' && stage.stage !== 'error'
+  // Step 1 — runtime.
+  const runtimeDone = !!runtime?.installed
+  const runtimeErr = runtimeStage.stage === 'error'
+  const runtimeActive =
+    runtimeStage.stage === 'locating' ||
+    runtimeStage.stage === 'downloading' ||
+    runtimeStage.stage === 'extracting'
+
+  // Step 2 — weights.
+  const weightsDone = !!modelStatus?.present
+  const weightsErr = !!pullError
+  const weightsActive = !!pullProgress && !weightsDone
+
+  // Step 3 — serve.
+  const prereqsReady = runtimeDone && weightsDone
+  const serveDone = server.state === 'running'
+
+  let serveState: StepState
+  let serveDetail: React.ReactNode
+  let serveRetry: (() => void) | undefined
+  if (serveDone) {
+    serveState = 'done'
+    serveDetail = (
+      <>
+        Serving on <span className="font-mono">127.0.0.1:{server.port ?? 8080}</span>
+      </>
+    )
+  } else if (server.state === 'starting' || (prereqsReady && !serveAttempted)) {
+    serveState = 'active'
+    serveDetail = 'Starting the model server…'
+  } else if (prereqsReady && serveAttempted) {
+    // Auto-start already fired but the server is back to stopped — it
+    // failed to come up. Offer a manual retry.
+    serveState = 'error'
+    serveDetail = 'Server didn’t start — retry to finish.'
+    serveRetry = onRetryServe
+  } else {
+    serveState = 'pending'
+    serveDetail = 'Waiting for the earlier steps…'
+  }
 
   return (
-    <SectionCard title="llama.cpp runtime" description="The native inference runtime Blueprint drives.">
-      {status?.installed && stage.stage !== 'downloading' && stage.stage !== 'extracting' ? (
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="text-sm">
-            <span className="mr-2 inline-flex h-2 w-2 rounded-full bg-chart-4" aria-hidden />
-            Installed <b className="font-mono text-foreground">{status.version}</b>
-          </p>
-          <p className="font-mono text-[11px] text-muted-foreground">{status.binPath}</p>
-        </div>
-      ) : (
-        <div>
-          <p className="text-sm">
-            <span className="mr-2 inline-flex h-2 w-2 rounded-full bg-muted-foreground/40" aria-hidden />
-            Not installed
-          </p>
-          {busy && <RuntimeBusy stage={stage} progress={progress} />}
-          {stage.stage === 'error' && (
-            <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-1.5 font-mono text-xs text-destructive">
-              {stage.detail}
-            </p>
-          )}
-          {!busy && (
-            <button
-              type="button"
-              onClick={onInstall}
-              className="mt-3 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
-            >
-              Install runtime
-              <span aria-hidden>→</span>
-            </button>
-          )}
-        </div>
-      )}
-    </SectionCard>
+    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <header className="border-b border-border px-6 py-4">
+        <h2 className="text-base font-semibold tracking-tight">
+          {error ? 'Setup needs a nudge' : 'Setting up your model'}
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {error
+            ? 'A step didn’t finish — retry it below. Everything else keeps going automatically.'
+            : 'Installing the runtime, pulling the weights, and starting the server — automatically. No clicks needed.'}
+        </p>
+      </header>
+      <ol>
+        <StepRow
+          n={1}
+          title="llama.cpp runtime"
+          state={
+            runtimeErr ? 'error' : runtimeDone ? 'done' : runtimeActive ? 'active' : 'pending'
+          }
+          detail={
+            runtimeDone ? (
+              <>
+                Installed <b className="font-mono">{runtime?.version}</b>
+              </>
+            ) : runtimeErr ? (
+              runtimeStage.detail ?? 'Install failed.'
+            ) : runtimeActive ? (
+              runtimeStageLabel(runtimeStage)
+            ) : (
+              'Queued…'
+            )
+          }
+          progress={runtimeStage.stage === 'downloading' ? runtimeProgress : null}
+          onRetry={runtimeErr ? onRetryRuntime : undefined}
+        />
+        <StepRow
+          n={2}
+          title="Model weights"
+          state={
+            weightsErr ? 'error' : weightsDone ? 'done' : weightsActive ? 'active' : 'pending'
+          }
+          detail={
+            weightsDone ? (
+              <>
+                {model.displayName}{' '}
+                <span className="font-mono">{quant.toUpperCase()}</span>
+                {modelStatus && (
+                  <span className="text-muted-foreground"> · {humanBytes(modelStatus.bytesGB)}</span>
+                )}
+              </>
+            ) : weightsErr ? (
+              pullError
+            ) : weightsActive ? (
+              'Downloading GGUF…'
+            ) : runtimeDone ? (
+              'Queued…'
+            ) : (
+              'Waiting for the runtime…'
+            )
+          }
+          progress={weightsActive ? pullProgress : null}
+          onRetry={weightsErr ? onRetryPull : undefined}
+        />
+        <StepRow
+          n={3}
+          title="llama-server"
+          state={serveState}
+          detail={serveDetail}
+          onRetry={serveRetry}
+        />
+      </ol>
+    </section>
   )
 }
 
-function RuntimeBusy({ stage, progress }: { stage: RuntimeStage; progress: DownloadProgress | null }) {
-  const label =
-    stage.stage === 'locating'
-      ? 'Locating latest llama.cpp release…'
-      : stage.stage === 'downloading'
-        ? `Downloading ${stage.detail ?? 'release'}`
-        : stage.stage === 'extracting'
-          ? `Extracting ${stage.detail ?? 'archive'}`
-          : ''
+function runtimeStageLabel(stage: RuntimeStage): string {
+  if (stage.stage === 'locating') return 'Locating the latest llama.cpp release…'
+  if (stage.stage === 'downloading') return `Downloading ${stage.detail ?? 'release'}…`
+  if (stage.stage === 'extracting') return `Extracting ${stage.detail ?? 'archive'}…`
+  return ''
+}
+
+type StepState = 'pending' | 'active' | 'done' | 'error'
+
+function StepRow({
+  n,
+  title,
+  state,
+  detail,
+  progress,
+  onRetry,
+}: {
+  n: number
+  title: string
+  state: StepState
+  detail: React.ReactNode
+  progress?: DownloadProgress | null
+  onRetry?: () => void
+}) {
   return (
-    <div className="mt-3 space-y-2">
-      <p className="font-mono text-xs text-muted-foreground">{label}</p>
-      {stage.stage === 'downloading' && progress && progress.total > 0 && (
-        <ProgressBar progress={progress} />
+    <li className="flex gap-4 border-t border-border px-6 py-4 first:border-t-0">
+      <StepIcon n={n} state={state} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-sm font-medium tracking-tight">{title}</p>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="shrink-0 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium transition hover:bg-muted"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+        <p
+          className={[
+            'mt-0.5 text-xs',
+            state === 'error' ? 'text-destructive' : 'text-muted-foreground',
+          ].join(' ')}
+        >
+          {detail}
+        </p>
+        {progress && progress.total > 0 && (
+          <div className="mt-2">
+            <ProgressBar progress={progress} />
+          </div>
+        )}
+      </div>
+    </li>
+  )
+}
+
+function StepIcon({ n, state }: { n: number; state: StepState }) {
+  const base = 'mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full'
+  if (state === 'done') {
+    return (
+      <span className={`${base} bg-chart-4/15 text-chart-4`} aria-label="done">
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="3">
+          <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+    )
+  }
+  if (state === 'error') {
+    return (
+      <span className={`${base} bg-destructive/15 text-destructive`} aria-label="error">
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="3">
+          <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+        </svg>
+      </span>
+    )
+  }
+  if (state === 'active') {
+    return (
+      <span className={`${base} bg-primary/10 text-primary`} aria-label="in progress">
+        <svg viewBox="0 0 24 24" className="h-4 w-4 animate-spin" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
+        </svg>
+      </span>
+    )
+  }
+  return (
+    <span className={`${base} border border-border font-mono text-[11px] text-muted-foreground`} aria-label="pending">
+      {n}
+    </span>
+  )
+}
+
+// ─── Ready UI ────────────────────────────────────────────────────────────────
+
+/**
+ * The slim "your model is live" strip shown once the server is up.
+ * Keeps the reassuring status to a single line, with a Details
+ * disclosure for the runtime/endpoint/weights particulars and a Stop
+ * button — so Verify below it gets the vertical space instead.
+ */
+function ReadyStrip({
+  model,
+  quant,
+  runtime,
+  modelStatus,
+  server,
+  onStop,
+}: {
+  model: Model
+  quant: string
+  runtime: RuntimeStatus | null
+  modelStatus: ModelStatus | null
+  server: ServerStatus
+  onStop: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const port = server.port ?? 8080
+  return (
+    <section className="rounded-2xl border border-chart-4/30 bg-chart-4/[0.06] px-5 py-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-chart-4/15 text-chart-4">
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3">
+            <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold tracking-tight">
+            {model.displayName}{' '}
+            <span className="font-mono text-xs text-muted-foreground">{quant.toUpperCase()}</span>{' '}
+            is live
+          </p>
+          <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+            <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-chart-4 align-middle" aria-hidden />
+            serving on 127.0.0.1:{port}/v1
+            {server.pid != null && ` · pid ${server.pid}`}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="rounded-md px-2 py-1 text-xs text-muted-foreground transition hover:text-foreground"
+        >
+          {open ? 'Hide details' : 'Details'}
+        </button>
+        <button
+          type="button"
+          onClick={onStop}
+          className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:bg-muted"
+        >
+          Stop
+        </button>
+      </div>
+      {open && (
+        <dl className="mt-3 grid gap-x-6 gap-y-1.5 border-t border-chart-4/20 pt-3 text-[11px] sm:grid-cols-2">
+          <DetailRow
+            label="Runtime"
+            value={<span className="font-mono">llama.cpp {runtime?.version}</span>}
+          />
+          <DetailRow
+            label="Endpoint"
+            value={<span className="font-mono">http://127.0.0.1:{port}/v1</span>}
+          />
+          <DetailRow
+            label="Weights"
+            value={
+              <span className="font-mono">
+                {quant.toUpperCase()}
+                {modelStatus && ` · ${humanBytes(modelStatus.bytesGB)}`}
+              </span>
+            }
+          />
+          <DetailRow
+            label="Path"
+            value={<span className="font-mono">{modelStatus?.path}</span>}
+          />
+        </dl>
       )}
+    </section>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 gap-2">
+      <dt className="shrink-0 text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 truncate text-foreground">{value}</dd>
     </div>
   )
 }
 
-function ModelCard({
-  model,
-  quant,
-  status,
-  progress,
-  error,
-  onPull,
-}: {
-  model: Model
-  quant: string
-  status: ModelStatus | null
-  progress: DownloadProgress | null
-  error: string | null
-  onPull: () => void
-}) {
-  const sizeOnDisk = status?.present ? humanBytes(status.bytesGB) : null
-  return (
-    <SectionCard
-      title="Model weights"
-      description="The GGUF file the runtime loads into VRAM."
-    >
-      {status?.present ? (
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="text-sm">
-            <span className="mr-2 inline-flex h-2 w-2 rounded-full bg-chart-4" aria-hidden />
-            <b>{model.displayName}</b> <span className="font-mono text-xs">{quant.toUpperCase()}</span>{' '}
-            on disk{sizeOnDisk && <span className="text-muted-foreground"> · {sizeOnDisk}</span>}
-          </p>
-          <p className="truncate font-mono text-[11px] text-muted-foreground">{status.path}</p>
-        </div>
-      ) : (
-        <div>
-          <p className="text-sm">
-            <span className="mr-2 inline-flex h-2 w-2 rounded-full bg-muted-foreground/40" aria-hidden />
-            Not on disk
-          </p>
-          {progress && (
-            <div className="mt-3 space-y-2">
-              <p className="font-mono text-xs text-muted-foreground">Downloading GGUF…</p>
-              <ProgressBar progress={progress} />
-            </div>
-          )}
-          {error && (
-            <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-1.5 font-mono text-xs text-destructive">
-              {error}
-            </p>
-          )}
-          {!progress && (
-            <button
-              type="button"
-              onClick={onPull}
-              className="mt-3 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
-            >
-              Pull model
-              <span aria-hidden>→</span>
-            </button>
-          )}
-        </div>
-      )}
-    </SectionCard>
-  )
-}
+// ─── Shared ──────────────────────────────────────────────────────────────────
 
-function ServeCard({
-  status,
-  runtimeReady,
-  modelReady,
-  onStart,
-  onStop,
-}: {
-  status: ServerStatus
-  runtimeReady: boolean
-  modelReady: boolean
-  onStart: () => void
-  onStop: () => void
-}) {
-  return (
-    <SectionCard
-      title="llama-server"
-      description="Local OpenAI-compatible API on 127.0.0.1:8080. Stays on this machine."
-    >
-      {status.state === 'running' ? (
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="text-sm">
-            <span className="mr-2 inline-flex h-2 w-2 animate-pulse rounded-full bg-chart-4" aria-hidden />
-            <b>Running</b> <span className="font-mono text-xs text-muted-foreground">
-              · pid {status.pid} · http://127.0.0.1:{status.port}/v1
-            </span>
-          </p>
-          <button
-            type="button"
-            onClick={onStop}
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
-          >
-            Stop
-          </button>
-        </div>
-      ) : status.state === 'starting' ? (
-        <p className="text-sm">
-          <span className="mr-2 inline-flex h-2 w-2 animate-pulse rounded-full bg-chart-5" aria-hidden />
-          Starting llama-server…
-        </p>
-      ) : (
-        <div>
-          <p className="text-sm">
-            <span className="mr-2 inline-flex h-2 w-2 rounded-full bg-muted-foreground/40" aria-hidden />
-            Stopped
-          </p>
-          {!runtimeReady || !modelReady ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {!runtimeReady && 'Install the runtime first. '}
-              {runtimeReady && !modelReady && 'Pull the model first.'}
-            </p>
-          ) : (
-            <button
-              type="button"
-              onClick={onStart}
-              className="mt-3 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
-            >
-              Start serve
-              <span aria-hidden>→</span>
-            </button>
-          )}
-        </div>
-      )}
-    </SectionCard>
-  )
-}
-
-function LogPane({
+/**
+ * The llama-server log, tucked into a collapsible drawer. Open during
+ * provisioning (model-load output is reassuring), collapsed once ready
+ * (Verify wants the space). `defaultOpen` seeds the initial state per
+ * phase; the distinct `key` on each usage remounts it across the flip.
+ */
+function CollapsibleLog({
   lines,
   containerRef,
+  defaultOpen,
 }: {
   lines: string[]
   containerRef: React.RefObject<HTMLDivElement | null>
+  defaultOpen: boolean
 }) {
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <header className="border-b border-border px-6 py-4">
-        <h2 className="text-balance text-base font-semibold tracking-tight">llama-server log</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Live tail of stdout/stderr. Shows model load, weights mmap, GPU layer offload, and any errors.
-        </p>
-      </header>
+    <details
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      className="overflow-hidden rounded-2xl border border-border bg-card"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between px-6 py-3 [&::-webkit-details-marker]:hidden">
+        <span className="text-sm font-medium tracking-tight">
+          llama-server log
+          <span className="ml-2 font-mono text-[11px] text-muted-foreground">
+            {lines.length ? `${lines.length} lines` : 'idle'}
+          </span>
+        </span>
+        <span
+          className={[
+            'font-mono text-xs text-muted-foreground transition-transform',
+            open ? 'rotate-180' : '',
+          ].join(' ')}
+          aria-hidden
+        >
+          ▾
+        </span>
+      </summary>
       <div
         ref={containerRef}
-        className="selectable max-h-[260px] min-h-[120px] overflow-y-auto bg-neutral-950 p-4 font-mono text-[11px] leading-relaxed text-neutral-200"
+        className="selectable max-h-[240px] min-h-[100px] overflow-y-auto border-t border-border bg-neutral-950 p-4 font-mono text-[11px] leading-relaxed text-neutral-200"
       >
         {lines.length === 0 ? (
-          <p className="text-neutral-500">Empty — start the server to see output.</p>
+          <p className="text-neutral-500">Empty — nothing logged yet.</p>
         ) : (
           lines.map((l, i) => <div key={i}>{l}</div>)
         )}
       </div>
-    </section>
-  )
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-function SectionCard({
-  title,
-  description,
-  children,
-}: {
-  title: string
-  description: string
-  children: React.ReactNode
-}) {
-  return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <header className="border-b border-border px-6 py-4">
-        <h2 className="text-balance text-base font-semibold tracking-tight">{title}</h2>
-        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-      </header>
-      <div className="p-6">{children}</div>
-    </section>
+    </details>
   )
 }
 
@@ -595,6 +758,26 @@ function ProgressBar({ progress }: { progress: DownloadProgress }) {
       </p>
     </div>
   )
+}
+
+// Health-probe used by the auto-provision guard. A plain fetch against
+// llama-server's unauthenticated /health endpoint; resolves true if a
+// server is already answering on the local port, false on any error or
+// timeout. Dependency-free (manual AbortController) so it works in every
+// WebView build.
+const SERVE_HEALTH_URL = 'http://127.0.0.1:8080/health'
+
+async function serverAlreadyUp(): Promise<boolean> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 1500)
+  try {
+    const res = await fetch(SERVE_HEALTH_URL, { signal: ctrl.signal })
+    return res.ok
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function humanBytes(n: number): string {
