@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -115,6 +116,35 @@ func TestE2ERelaySeesOnlyCiphertext(t *testing.T) {
 		if bytes.Contains(frame, marker) {
 			t.Fatalf("plaintext marker leaked in on-the-wire frame %d", i)
 		}
+	}
+}
+
+// Concurrent Send must not corrupt the nonce sequence — every frame decrypts.
+func TestE2EConcurrentSends(t *testing.T) {
+	secret, _ := GenerateSecret()
+	hc, gc := memPair()
+	host, guest, he, ge := runHandshake(hc, gc, secret, secret)
+	if he != nil || ge != nil {
+		t.Fatalf("handshake: host=%v guest=%v", he, ge)
+	}
+
+	const n = 50
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); _ = host.Send([]byte(fmt.Sprintf("msg-%d", i))) }(i)
+	}
+	seen := make(map[string]bool, n)
+	for i := 0; i < n; i++ {
+		got, err := guest.Recv()
+		if err != nil {
+			t.Fatalf("recv %d: %v", i, err)
+		}
+		seen[string(got)] = true
+	}
+	wg.Wait()
+	if len(seen) != n {
+		t.Fatalf("got %d distinct messages, want %d", len(seen), n)
 	}
 }
 

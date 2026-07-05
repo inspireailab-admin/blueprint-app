@@ -193,27 +193,30 @@ func confirmTag(key []byte, host bool) []byte {
 	return m.Sum(nil)
 }
 
-// Send encrypts and delivers one frame to the peer.
+// Send encrypts and delivers one frame to the peer. Safe for concurrent use:
+// the lock is held across nonce assignment AND the write, so frames leave in
+// nonce order (the receiver decrypts with a matching sequential counter).
 func (s *SecureLink) Send(plaintext []byte) error {
 	s.smu.Lock()
+	defer s.smu.Unlock()
 	nonce := make([]byte, chacha20poly1305.NonceSize)
 	binary.BigEndian.PutUint64(nonce[4:], s.sctr)
 	s.sctr++
-	s.smu.Unlock()
 	return s.fc.Send(s.send.Seal(nil, nonce, plaintext, nil))
 }
 
-// Recv receives and decrypts one frame from the peer.
+// Recv receives and decrypts one frame from the peer. Single-reader: the lock
+// is held across the read and counter so frame order matches nonce order.
 func (s *SecureLink) Recv() ([]byte, error) {
+	s.rmu.Lock()
+	defer s.rmu.Unlock()
 	ct, err := s.fc.Recv()
 	if err != nil {
 		return nil, err
 	}
-	s.rmu.Lock()
 	nonce := make([]byte, chacha20poly1305.NonceSize)
 	binary.BigEndian.PutUint64(nonce[4:], s.rctr)
 	s.rctr++
-	s.rmu.Unlock()
 	pt, err := s.recv.Open(nil, nonce, ct, nil)
 	if err != nil {
 		return nil, fmt.Errorf("enroll: decrypt failed: %w", err)
