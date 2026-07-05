@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
 )
@@ -63,8 +64,20 @@ func installService() error {
 		}
 	}
 
-	// 2. Write the systemd unit.
-	if err := os.WriteFile(systemdUnitPath, []byte(systemdUnitTemplate), 0o644); err != nil {
+	// 2. Write the systemd unit. If an enrollment code is configured (the
+	//    Blueprint installer sets BLUEPRINT_ENROLL_CODE), bake it into the unit
+	//    so the svc enrolls with the relay on start. The code contains a secret,
+	//    so a unit carrying one is written root-only (0600).
+	unit := systemdUnitTemplate
+	mode := os.FileMode(0o644)
+	if code := os.Getenv("BLUEPRINT_ENROLL_CODE"); code != "" {
+		unit = injectEnv(unit, "BLUEPRINT_ENROLL_CODE", code)
+		if url := os.Getenv("BLUEPRINT_RELAY_URL"); url != "" {
+			unit = injectEnv(unit, "BLUEPRINT_RELAY_URL", url)
+		}
+		mode = 0o600
+	}
+	if err := os.WriteFile(systemdUnitPath, []byte(unit), mode); err != nil {
 		return fmt.Errorf("write unit: %w", err)
 	}
 
@@ -123,6 +136,13 @@ func printStatus() error {
 		}
 	}
 	return nil
+}
+
+// injectEnv adds an Environment= line to the [Service] section, right after the
+// existing BLUEPRINT_SERVICE_DATA line.
+func injectEnv(unit, key, value string) string {
+	anchor := "Environment=BLUEPRINT_SERVICE_DATA=/var/lib/blueprint"
+	return strings.Replace(unit, anchor, anchor+"\nEnvironment="+key+"="+value, 1)
 }
 
 func systemctl(args ...string) error {
