@@ -12,6 +12,33 @@ import (
 	"github.com/inspireailab-admin/blueprint-app/internal/relay"
 )
 
+// Enroll starts a desktop enrollment: it registers with the relay and returns
+// the user-facing join code (PAIRID-SECRET) to show the user, plus a wait
+// function that blocks until the agent pairs, secures the channel, and yields a
+// DesktopClient. This is the desktop counterpart of the agent's Run.
+func Enroll(ctx context.Context, relayURL string) (code string, wait func() (*DesktopClient, error), err error) {
+	pairID, waitHost, err := relay.RegisterAsHost(ctx, relayURL)
+	if err != nil {
+		return "", nil, err
+	}
+	code, secret, err := relay.EnrollCode(pairID)
+	if err != nil {
+		return "", nil, err
+	}
+	wait = func() (*DesktopClient, error) {
+		link, err := waitHost()
+		if err != nil {
+			return nil, err
+		}
+		sec, err := relay.SecureAsHost(link, secret)
+		if err != nil {
+			return nil, err
+		}
+		return NewDesktopClient(sec), nil
+	}
+	return code, wait, nil
+}
+
 // DesktopClient drives a remote agent over a secured relay link.
 type DesktopClient struct {
 	c *control.Client

@@ -59,27 +59,18 @@ func TestAgentEnrollAndDriveOverRelay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	pairID, wait, err := relay.RegisterAsHost(ctx, wsURL)
+	code, wait, err := Enroll(ctx, wsURL)
 	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	code, secret, err := relay.EnrollCode(pairID)
-	if err != nil {
-		t.Fatalf("enroll code: %v", err)
+		t.Fatalf("enroll: %v", err)
 	}
 
 	rt := &stubRuntime{}
 	go func() { _ = Run(ctx, wsURL, code, rt) }()
 
-	hl, err := wait()
+	dc, err := wait()
 	if err != nil {
 		t.Fatalf("host wait: %v", err)
 	}
-	hsec, err := relay.SecureAsHost(hl, secret)
-	if err != nil {
-		t.Fatalf("secure host: %v", err)
-	}
-	dc := NewDesktopClient(hsec)
 
 	hw, err := dc.DetectHardware(ctx)
 	if err != nil {
