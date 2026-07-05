@@ -67,6 +67,14 @@ type Config struct {
 	// NGpuLayers is --n-gpu-layers (999 = offload everything).
 	NGpuLayers int `json:"nGpuLayers"`
 
+	// ─── Multi-GPU placement ─────────────────────────────────────────
+	// SplitMode is --split-mode ("layer" | "row"). Empty = llama.cpp default.
+	SplitMode string `json:"splitMode,omitempty"`
+	// TensorSplit is --tensor-split (per-GPU proportions ∝ VRAM). Empty = default.
+	TensorSplit []float64 `json:"tensorSplit,omitempty"`
+	// MainGPU is --main-gpu (holds non-split tensors / KV in row mode). 0 = default.
+	MainGPU int `json:"mainGpu,omitempty"`
+
 	// EnableMetrics adds --metrics so /metrics is exposed.
 	EnableMetrics bool `json:"enableMetrics"`
 

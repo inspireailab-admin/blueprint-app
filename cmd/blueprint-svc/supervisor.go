@@ -73,6 +73,7 @@ type runSupervisorOpts struct {
 
 func runSupervisor(ctx context.Context, opts runSupervisorOpts) {
 	startAPIOnce()
+	startAgentOnce(ctx) // enroll with the relay if a join code is configured
 	writeStatus(svcconfig.Status{Phase: "idle"})
 
 	var restartCount int

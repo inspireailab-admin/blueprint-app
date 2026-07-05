@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/inspireailab-admin/blueprint-app/internal/pyruntime"
 	"github.com/inspireailab-admin/blueprint-app/internal/svcconfig"
@@ -128,6 +129,21 @@ func (LlamaCpp) Args(cfg *svcconfig.Config) []string {
 		"--port", strconv.Itoa(cfg.Port),
 		"--ctx-size", strconv.Itoa(cfg.CtxSize),
 		"--n-gpu-layers", strconv.Itoa(cfg.NGpuLayers),
+	}
+	// Multi-GPU placement (docs/plan-target-aware-deploy.md §7). Only emitted
+	// when set, so single-GPU serving is unchanged.
+	if cfg.SplitMode == "layer" || cfg.SplitMode == "row" {
+		args = append(args, "--split-mode", cfg.SplitMode)
+	}
+	if len(cfg.TensorSplit) > 0 {
+		parts := make([]string, len(cfg.TensorSplit))
+		for i, f := range cfg.TensorSplit {
+			parts[i] = strconv.FormatFloat(f, 'g', -1, 64)
+		}
+		args = append(args, "--tensor-split", strings.Join(parts, ","))
+	}
+	if cfg.MainGPU > 0 {
+		args = append(args, "--main-gpu", strconv.Itoa(cfg.MainGPU))
 	}
 	if cfg.APIKey != "" {
 		args = append(args, "--api-key", cfg.APIKey)
