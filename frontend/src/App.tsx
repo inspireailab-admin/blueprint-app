@@ -305,6 +305,7 @@ type DashboardTabId =
   | 'overview'
   | 'inference'
   | 'models'
+  | 'machines'
   | 'hosts'
   | 'calibrate'
   | 'maintain'
@@ -313,6 +314,7 @@ const DASH_TABS: { id: DashboardTabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'inference', label: 'Inference' },
   { id: 'models', label: 'Models' },
+  { id: 'machines', label: 'Machines' },
   { id: 'hosts', label: 'Hosts' },
   { id: 'calibrate', label: 'Calibrate' },
   { id: 'maintain', label: 'Maintain' },

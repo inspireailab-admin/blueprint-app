@@ -41,6 +41,7 @@ import { TrainCard } from './TrainCard'
 import { CalibrateExplorer } from '../calibrate/CalibrateExplorer'
 import { MaintainExplorer } from '../maintain/MaintainExplorer'
 import { HostsExplorer } from '../hosts/HostsExplorer'
+import { MachinesExplorer } from '../machines/MachinesExplorer'
 import {
   RemoteChatStream,
   RemoteHostInfo,
@@ -63,6 +64,7 @@ export type DashboardSection =
   | 'overview'
   | 'inference'
   | 'models'
+  | 'machines'
   | 'hosts'
   | 'calibrate'
   | 'maintain'
@@ -197,6 +199,11 @@ export function DashboardExplorer({
   // available even when a remote is selected.
   if (section === 'hosts') {
     return <HostsExplorer />
+  }
+
+  // Machines — relay-enrolled remote boxes; host-independent registry.
+  if (section === 'machines') {
+    return <MachinesExplorer />
   }
 
   // Remote-host-aware routing: each ported section gets its own
