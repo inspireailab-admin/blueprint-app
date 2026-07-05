@@ -41,13 +41,17 @@ func Enroll(ctx context.Context, relayURL string) (code string, wait func() (*De
 
 // DesktopClient drives a remote agent over a secured relay link.
 type DesktopClient struct {
-	c *control.Client
+	c   *control.Client
+	sec *relay.SecureLink
 }
 
 // NewDesktopClient wraps a paired, secured link.
 func NewDesktopClient(sec *relay.SecureLink) *DesktopClient {
-	return &DesktopClient{c: control.NewClient(sec)}
+	return &DesktopClient{c: control.NewClient(sec), sec: sec}
 }
+
+// Close tears down the underlying secure link (and the control read loop).
+func (d *DesktopClient) Close() error { return d.sec.Close() }
 
 // DetectHardware asks the remote machine for its GPUs / CPU / RAM.
 func (d *DesktopClient) DetectHardware(ctx context.Context) (Hardware, error) {
