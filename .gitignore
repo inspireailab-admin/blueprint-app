@@ -34,3 +34,6 @@ frontend/package-lock.json
 
 # TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo
+
+# relay build artifacts
+/dist/

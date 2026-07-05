@@ -1,0 +1,3 @@
+# Secrets / local state — never commit these
+*.pem
+resources.env
