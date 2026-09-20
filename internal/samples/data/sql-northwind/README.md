@@ -1,17 +1,17 @@
 ---
-id: sql-apex
+id: sql-northwind
 domain: nl-to-sql
 scoring: rouge-l
 base_model: llama-3.2-3b-instruct
 calibration_size: 30
 eval_size: 20
-schema: apex_manufacturing
+schema: northwind_fabrication
 expected_delta_pct: 8
 ---
 
-# SQL generation — Apex Manufacturing
+# SQL generation — Northwind Fabrication
 
-A fictional manufacturing company called **Apex** with the following
+A fictional manufacturing company called **Northwind Fabrication** with the following
 schema:
 
 ```sql
@@ -24,7 +24,7 @@ production_runs  (id, sku, plant_code, run_date, units_produced, defect_count)
 The base model has never seen this schema. Stock Llama 3.2 3B will
 guess column names that look plausible ("employee_id", "production_date")
 but don't match. The custom-calibrated quant, trained on prompts that
-consistently use Apex's table/column names, learns the mapping and
+consistently use Northwind's table/column names, learns the mapping and
 generates queries that compile against the actual schema.
 
 ROUGE-L scoring captures the token-overlap win without penalizing

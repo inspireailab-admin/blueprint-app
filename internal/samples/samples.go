@@ -51,10 +51,10 @@ func All() []Sample {
 			Targets:     []string{"IQ4_XS", "Q4_K_M"},
 		},
 		{
-			ID:          "sql-apex",
-			Name:        "SQL generation (Apex Manufacturing)",
+			ID:          "sql-northwind",
+			Name:        "SQL generation (Northwind Fabrication)",
 			Summary:     "Translate natural-language questions into SQL against a fictional manufacturing schema. Tests the model on a domain-specific table shape it has never seen.",
-			Description: descFor("sql-apex"),
+			Description: descFor("sql-northwind"),
 			Domain:      "Code generation · SQL",
 			Scoring:     "rouge-l",
 			BaseModelID: "llama-3.2-3b-instruct",
