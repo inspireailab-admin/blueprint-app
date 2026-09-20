@@ -25,6 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Text files must not contain UTF-8 that was re-saved through
+      # Windows-1252 (see scripts/check-encoding.sh).
+      - name: Check text encoding
+        if: matrix.os == 'ubuntu-latest'
+        run: ./scripts/check-encoding.sh
+
       # Wails Linux build needs WebKit/GTK + libsoup; macOS + Windows have
       # WebView2 / WKWebView baked in already.
       - name: Install Linux Wails deps
